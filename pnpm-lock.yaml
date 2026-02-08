@@ -242,6 +242,8 @@ importers:
         specifier: workspace:*
         version: link:../../packages/eslint-config-custom
 
+  apps/lofi_library: {}
+
   apps/number-picker:
     dependencies:
       '@lingui/core':
