@@ -1,12 +1,1 @@
-<script>
-  import GameGrid from './GameGrid.svelte';
-</script>
-
-<main>
-  <h1>Lofi Library</h1>
-  <GameGrid />
-</main>
-
-<style>
-  main { text-align: center; color: #5d576b; background-color: #f0e4d7; min-height: 100vh; }
-</style>
+<script>import GameGrid from "./GameGrid.svelte";</script><main><div class="ui"><h1>Lofi Library</h1></div><div class="game"><GameGrid /></div></main><style>main{display:flex;flex-direction:column;height:100vh;background:#f0e4d7;margin:0;padding-top:env(safe-area-inset-top);}.ui{height:60px;text-align:center;color:#5d576b;}.game{flex:1;display:flex;justify-content:center;align-items:center;padding-bottom:40px;}</style>
