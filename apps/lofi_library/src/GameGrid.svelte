@@ -1,7 +1,6 @@
 <script>
   import { onMount } from 'svelte';
   import { fly, scale, fade } from 'svelte/transition';
-  import { backOut, elasticOut, quadIn } from 'svelte/easing';
 
   let grid = [];
   let winningIndices = new Set();
@@ -17,6 +16,13 @@
   let showWinBanner = false;
   let bannerText = "MATCH!";
   let showMegaWin = false;
+  let isMuted = false;
+
+  // --- AUDIO SETTINGS ---
+  let musicVolume = 0.15; 
+  let sfxVolume = 0.45;   
+  let bgMusic;
+  let sfxCache = {};
 
   let showAutoModal = false;
   let showBetModal = false;
@@ -38,29 +44,50 @@
 
   const betOptions = [0.10, 0.20, 0.50, 0.80, 1.00, 2.00, 5.00, 10.00];
 
+  function preloadSFX() {
+    const files = ['spin.wav', 'land.wav', 'win.wav', 'poof.wav'];
+    files.forEach(file => {
+      const audio = new Audio(`/${file}`);
+      audio.preload = 'auto';
+      sfxCache[file] = audio;
+    });
+  }
+
+  function playSFX(file, volAdj = 1.0, pitch = 1.0) {
+    if (isMuted || !sfxCache[file]) return;
+    const instance = sfxCache[file].cloneNode();
+    instance.volume = sfxVolume * volAdj;
+    instance.preservesPitch = false;
+    instance.playbackRate = isTurbo ? pitch * 1.15 : pitch;
+    instance.play().catch(() => {});
+  }
+
+  function toggleMute() {
+    isMuted = !isMuted;
+    if (bgMusic) {
+      if (isMuted) bgMusic.pause();
+      else bgMusic.play().catch(() => {});
+    }
+  }
+
+  function wait(ms) { return new Promise(r => setTimeout(r, isTurbo ? ms / 3 : ms)); }
+
   function getRandomSymbol() {
     const pool = [];
     symbols.forEach(s => { for (let i = 0; i < s.weight; i++) pool.push(s); });
-    const s = pool[Math.floor(Math.random() * pool.length)];
-    return { ...s, key: Math.random() };
-  }
-
-  const wait = (ms) => new Promise(r => setTimeout(r, isTurbo ? ms / 3 : ms));
-
-  function toggleAuto() {
-    if (isAutoPlaying) { isAutoPlaying = false; autoSpinsRemaining = 0; }
-    else { showAutoModal = true; }
+    return { ...pool[Math.floor(Math.random() * pool.length)], key: Math.random() };
   }
 
   async function spin() {
     if (isSpinning && !isAutoPlaying) return; 
     if (balance < bet) { isAutoPlaying = false; return alert("Low balance!"); }
+    playSFX('spin.wav', 1.0); 
     showWinBanner = false; showMegaWin = false; isSpinning = true; 
     displayedSessionWin = 0; actualSessionWin = 0; tumbleMultiplier = 1; balance -= bet;
-    
     grid = Array.from({ length: 25 }, () => null);
     for(let col=0; col<5; col++) {
       for(let row=0; row<5; row++) { grid[row * 5 + col] = getRandomSymbol(); }
+      playSFX('land.wav', 0.4, 0.9 + (col * 0.05)); 
       await wait(180); 
     }
     await wait(800);
@@ -80,10 +107,12 @@
       winningIndices = wins; 
       actualSessionWin += currentMatchWin; 
       balance += currentMatchWin;
+      playSFX('win.wav', 1.2, 1.0 + (tumbleMultiplier * 0.1)); 
       bannerText = tumbleMultiplier > 1 ? `COMBO x${tumbleMultiplier}!` : "MATCH!";
       showWinBanner = true; displayedSessionWin = actualSessionWin;
       await wait(1800);
       poofIndices = new Set(wins);
+      playSFX('poof.wav', 0.8);
       grid = grid.map((s, i) => wins.has(i) ? null : s);
       winningIndices = new Set();
       await wait(500);
@@ -136,7 +165,26 @@
     }
     return { totalWin: totalPayout, wins };
   }
-  onMount(() => { grid = Array.from({ length: 25 }, () => getRandomSymbol()); });
+
+  function toggleAuto() {
+    if (isAutoPlaying) { isAutoPlaying = false; autoSpinsRemaining = 0; }
+    else { showAutoModal = true; }
+  }
+
+  onMount(() => { 
+    grid = Array.from({ length: 25 }, () => getRandomSymbol());
+    preloadSFX();
+    bgMusic = new Audio('/bg_loop.mp3');
+    bgMusic.loop = true;
+    bgMusic.volume = musicVolume;
+    const startAudio = () => {
+      if (!isMuted) bgMusic.play().catch(() => {});
+      window.removeEventListener('click', startAudio);
+      window.removeEventListener('touchstart', startAudio);
+    };
+    window.addEventListener('click', startAudio);
+    window.addEventListener('touchstart', startAudio);
+  });
 </script>
 
 <style>
@@ -145,14 +193,7 @@
   @keyframes bg-breath { 0%, 100% { transform: scale(1); } 50% { transform: scale(1.02); } }
   .game-container { background: rgba(255, 253, 250, 0.94); padding: 12px; border-radius: 20px; width: 94%; max-width: 420px; position: relative; box-shadow: 0 12px 45px rgba(0,0,0,0.55); border: 5px solid #3d405b; margin-bottom: 1.5vh; z-index: 5; }
   
-  .on-screen-win { 
-    position: absolute; top: 40%; left: 50%; transform: translate(-50%, -50%); 
-    color: white; padding: 15px 25px; border-radius: 50px; 
-    font-size: 1.6rem; font-weight: 900; z-index: 500; border: 4px solid white; 
-    text-align: center; pointer-events: none; 
-    animation: banner-slam 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275);
-    transition: background 0.5s, box-shadow 0.5s;
-  }
+  .on-screen-win { position: absolute; top: 40%; left: 50%; transform: translate(-50%, -50%); color: white; padding: 15px 25px; border-radius: 50px; font-size: 1.6rem; font-weight: 900; z-index: 500; border: 4px solid white; text-align: center; pointer-events: none; animation: banner-slam 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275); transition: background 0.5s, box-shadow 0.5s; }
   .on-screen-win.level-1 { background: #e07a5f; box-shadow: 0 8px 0 #be634a; }
   .on-screen-win.level-2 { background: #f2cc8f; box-shadow: 0 8px 0 #d4a35d; color: #3d405b; border-color: #3d405b; }
   .on-screen-win.level-3 { background: #9b5de5; box-shadow: 0 8px 0 #6a3ab1; animation: banner-slam 0.4s, pulse-purple 1.5s infinite alternate; }
@@ -172,11 +213,8 @@
   .side-btn { background: #81b29a; border: none; border-radius: 8px; min-width: 48px; color: white; font-weight: 900; font-size: 0.8rem; cursor: pointer; }
   .side-btn.active { background: #f2cc8f !important; color: #3d405b !important; }
   .spin-btn { flex: 1; background: #e07a5f; color: white; border: none; border-radius: 8px; height: 52px; font-weight: 900; font-size: 1.2rem; box-shadow: 0 4px 0 #be634a; }
-  
-  /* MODAL OVERHAUL */
   .modal-backdrop { position: fixed; inset: 0; background: rgba(0,0,0,0.85); z-index: 100000; display: flex; align-items: center; justify-content: center; }
   .modal-box { background: #3d405b; padding: 25px; border-radius: 20px; width: 85%; max-width: 360px; color: white; border: 4px solid #81b29a; position: relative; text-align: center; max-height: 80vh; overflow-y: auto; }
-  /* CLOSE X: Moved inside padding to ensure screen safety */
   .close-x { position: absolute; top: 10px; right: 10px; width: 32px; height: 32px; background: #e07a5f; color: white; border-radius: 50%; border: 2px solid white; font-weight: 900; cursor: pointer; display: flex; align-items: center; justify-content: center; z-index: 10; }
 </style>
 
@@ -214,6 +252,7 @@
       <button class="side-btn" class:active={isAutoPlaying} on:click={toggleAuto}>{isAutoPlaying ? autoSpinsRemaining : 'AUTO'}</button>
       <button class="spin-btn" class:stop-mode={isAutoPlaying} on:click={() => isAutoPlaying ? toggleAuto() : spin()} disabled={isSpinning && !isAutoPlaying}> {isAutoPlaying ? 'STOP' : (isSpinning ? '...' : 'SPIN')} </button>
       <button class="side-btn" class:active={isTurbo} on:click={() => isTurbo = !isTurbo}>⚡</button>
+      <button class="side-btn" on:click={toggleMute}>{isMuted ? '🔇' : '🔈'}</button>
       <button class="side-btn" on:click={() => showBetModal = true} disabled={isAutoPlaying}>${bet.toFixed(2)}</button>
     </div>
   </div>
