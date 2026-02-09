@@ -2,7 +2,7 @@
   "name": "twist-turbo",
   "version": "0.0.0",
   "private": true,
-	"license": "MIT",
+  "license": "MIT",
   "scripts": {
     "lint": "turbo run lint",
     "format": "turbo run format",
@@ -14,7 +14,9 @@
     "publish-packages": "turbo run build lint test && changeset version && changeset publish",
     "e2e": "turbo run e2e",
     "e2e-smoke": "turbo run e2e-smoke",
-    "e2e-mobile": "turbo run e2e-mobile"
+    "e2e-mobile": "turbo run e2e-mobile",
+    "lofi": "pnpm --filter lofi_library dev --host",
+    "save": "git add apps/lofi_library/src/GameGrid.svelte apps/lofi_library/public/*.png && git commit -m \"Mobile Update: $(date +\"%Y-%m-%d %H:%M\")\" && git push origin main"
   },
   "dependencies": {
     "eslint": "9.21.0",
