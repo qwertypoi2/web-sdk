@@ -1,181 +1,188 @@
 <script>
-  import { onMount } from "svelte";
-  import { Application, Assets, Sprite, Container, TextureStyle, Text, TextStyle } from "pixi.js";
+  import { onMount } from 'svelte';
+  import { fly, scale, fade } from 'svelte/transition';
 
-  let canvasContainer;
-  let pixiApp;
-  let gridSprites = []; 
-  let gridTexts = []; 
-  let loadedTextures = {};
-  let isSpinning = false;
-  let winMessage = "Ready to Spin";
+  let grid = [];
+  let winningIndices = new Set();
+  let bonusSpins = 0;
+  let balance = 1000.00;
+  let bet = 1.00;
+  let lastWin = 0.00;
+  let winType = ''; 
+  let showBanner = false;
 
-  // SYMBOLS: Headphones are normal. Wild is Wild.
-  const symbols = ["matcha", "cat", "book", "succulent", "vinyl", "cabin", "headphones", "candle", "wild"];
-  
-  // LOGIC SETTING: "wild" is the only wildcard
-  const WILD_SYMBOL = "wild";
-  const gridSize = 7;
+  const symbols = [
+    { id: 'succulent', image: 'succulent.png', weight: 10, value: 2 },
+    { id: 'vinyl', image: 'record.png', weight: 8, value: 5 },
+    { id: 'book', image: 'book.png', weight: 10, value: 3 },
+    { id: 'matcha', image: 'coffee.png', weight: 12, value: 1.5 },
+    { id: 'cat', image: 'cat.png', weight: 5, value: 10 },
+    { id: 'cabin', image: 'cabin.png', weight: 3, value: 50 },
+    { id: 'headphones', image: 'headphones.png', weight: 7, value: 8 },
+    { id: 'candle', image: 'candle.png', weight: 15, value: 1 },
+    { id: 'library_card', image: 'wild.png', weight: 2, isWild: true } 
+  ];
 
-  onMount(async () => {
-    // Force pixel-art style (no blur)
-    TextureStyle.defaultOptions.scaleMode = 'nearest';
-    const screenWidth = Math.min(window.innerWidth - 32, 600);
+  function calculateWins() {
+    let visited = new Set();
+    let wins = new Set();
+    let totalPayout = 0;
     
-    pixiApp = new Application();
-    await pixiApp.init({ 
-      width: screenWidth, 
-      height: screenWidth, 
-      background: "#f0e4d7", 
-      backgroundAlpha: 1,
-      roundPixels: true, 
-      resolution: window.devicePixelRatio || 2,
-      autoDensity: true
-    });
-
-    canvasContainer.appendChild(pixiApp.canvas);
-
-    for (const name of symbols) {
-      try { loadedTextures[name] = await Assets.load(`${name}.png`); } catch (e) {}
+    for (let i = 0; i < 25; i++) {
+      if (visited.has(i) || grid[i].isWild) continue;
+      let cluster = [];
+      let queue = [i];
+      let type = grid[i].id;
+      
+      while (queue.length > 0) {
+        let curr = queue.shift();
+        if (visited.has(curr)) continue;
+        let neighbors = [curr-5, curr+5, curr-1, curr+1];
+        visited.add(curr);
+        cluster.push(curr);
+        neighbors.forEach(n => {
+          if (n >= 0 && n < 25 && !visited.has(n)) {
+            if ((Math.abs(curr - n) === 5 || Math.floor(curr/5) === Math.floor(n/5)) && 
+                (grid[n].id === type || grid[n].isWild)) queue.push(n);
+          }
+        });
+      }
+      
+      if (cluster.length >= 4) {
+        cluster.forEach(idx => wins.add(idx));
+        totalPayout += (grid[i].value * cluster.length);
+      }
     }
 
-    const gridContainer = new Container();
-    pixiApp.stage.addChild(gridContainer);
-    
-    const tileSize = screenWidth / gridSize; 
-    
-    const wildStyle = new TextStyle({
-      fontFamily: "Courier New", 
-      fontSize: tileSize * 0.25, 
-      fontWeight: "bold",
-      fill: "#ffffff", 
-      stroke: "#4a3567", 
-      strokeThickness: 4,
-    });
+    winningIndices = wins;
+    let multiplier = bonusSpins > 0 ? 3 : 1;
+    let finalWin = totalPayout * bet * multiplier;
+    lastWin = finalWin;
+    balance += finalWin;
 
-    for (let i = 0; i < gridSize * gridSize; i++) {
-      const sprite = new Sprite(loadedTextures["cat"]); 
-      sprite.x = (i % gridSize) * tileSize;
-      sprite.y = Math.floor(i / gridSize) * tileSize;
-      sprite.width = tileSize; 
-      sprite.height = tileSize;
-      gridContainer.addChild(sprite);
-      gridSprites.push(sprite);
-
-      const text = new Text({ text: "WILD", style: wildStyle });
-      text.anchor.set(0.5);
-      text.x = sprite.x + tileSize / 2; 
-      text.y = sprite.y + tileSize / 2;
-      text.visible = false; 
-      gridContainer.addChild(text);
-      gridTexts.push(text);
-    }
-    spin(); 
-  });
+    if (finalWin >= bet * 50) { winType = 'FINAL EXAM WIN'; showBanner = true; }
+    else if (finalWin >= bet * 20) { winType = 'STUDY BREAK WIN'; showBanner = true; }
+    if (showBanner) setTimeout(() => showBanner = false, 3500);
+  }
 
   function spin() {
-    if (isSpinning) return;
-    isSpinning = true;
-    winMessage = "Spinning...";
-
-    let logicGrid = [];
-    for (let y = 0; y < gridSize; y++) {
-      let row = [];
-      for (let x = 0; x < gridSize; x++) {
-        row.push(symbols[Math.floor(Math.random() * symbols.length)]);
-      }
-      logicGrid.push(row);
+    if (bonusSpins > 0) bonusSpins--;
+    else {
+      if (balance < bet) return alert("Low balance!");
+      balance -= bet;
     }
-
-    for (let i = 0; i < gridSize * gridSize; i++) {
-      const x = i % gridSize;
-      const y = Math.floor(i / gridSize);
-      const symbol = logicGrid[y][x];
-      
-      gridSprites[i].texture = loadedTextures[symbol];
-      gridSprites[i].alpha = 1; 
-      
-      // ONLY show text label if it is the REAL wild ticket
-      if (symbol === WILD_SYMBOL) {
-        gridTexts[i].visible = true;
-      } else {
-        gridTexts[i].visible = false;
-      }
-    }
-
-    const wins = findClusters(logicGrid);
-
-    if (wins.length > 0) {
-      winMessage = `WIN! Found ${wins.length} clusters!`;
-      gridSprites.forEach(s => s.alpha = 0.4);
-      gridTexts.forEach(t => t.alpha = 0.4);
-
-      wins.forEach(cluster => {
-        cluster.forEach(({x, y}) => {
-          const index = y * gridSize + x;
-          gridSprites[index].alpha = 1.0;
-          if (gridTexts[index].visible) gridTexts[index].alpha = 1.0;
-        });
-      });
-    } else {
-      winMessage = "No wins this time.";
-    }
-    setTimeout(() => { isSpinning = false; }, 200);
+    showBanner = false;
+    winningIndices = new Set();
+    const pool = [];
+    symbols.forEach(s => { for (let i = 0; i < s.weight; i++) pool.push(s); });
+    grid = Array.from({ length: 25 }, () => ({
+      ...pool[Math.floor(Math.random() * pool.length)],
+      key: Math.random()
+    }));
+    calculateWins();
+    if (grid.filter(s => s.isWild).length >= 3 && bonusSpins === 0) bonusSpins = 8;
   }
 
-  function findClusters(grid) {
-    let visited = Array(gridSize).fill().map(() => Array(gridSize).fill(false));
-    let clusters = [];
-
-    function getCluster(x, y, type) {
-      if (x < 0 || x >= gridSize || y < 0 || y >= gridSize) return []; 
-      if (visited[y][x]) return []; 
-      
-      const currentSymbol = grid[y][x];
-      const isMatch = (currentSymbol === type) || (currentSymbol === WILD_SYMBOL) || (type === WILD_SYMBOL);
-      if (!isMatch) return [];
-
-      visited[y][x] = true;
-      let coords = [{x, y}];
-      coords = coords.concat(getCluster(x + 1, y, type));
-      coords = coords.concat(getCluster(x - 1, y, type));
-      coords = coords.concat(getCluster(x, y + 1, type));
-      coords = coords.concat(getCluster(x, y - 1, type));
-      return coords;
-    }
-
-    for (let y = 0; y < gridSize; y++) {
-      for (let x = 0; x < gridSize; x++) {
-        if (!visited[y][x]) {
-          const type = grid[y][x];
-          // FIX: Don't start searching on a Wild
-          if (type === WILD_SYMBOL) continue;
-          const cluster = getCluster(x, y, type);
-          if (cluster.length >= 5) clusters.push(cluster);
-        }
-      }
-    }
-    return clusters;
-  }
+  onMount(spin);
 </script>
 
-<div class="game-wrapper">
-  <h3>{winMessage} - v2</h3>
-  <div bind:this={canvasContainer}></div>
-  <button on:click={spin} disabled={isSpinning}>SPIN</button>
-</div>
-
 <style>
-  .game-wrapper {
-    display: flex; flex-direction: column; align-items: center; s 
-    gap: 15px; width: 100%; padding-top: 10px; font-family: monospace;
+  /* SAFE UI RESET: Hide only the rogue titles */
+  :global(body > h1), :global(body > h2), :global(body > header) { 
+    display: none !important; 
   }
-  h3 { min-height: 1.5em; color: #4a3567; font-weight: bold;}
-  button {
-    background-color: #6a4c93; color: white;
-    font-size: 1.5rem; padding: 15px 40px;
-    border: none; border-radius: 12px;
-    cursor: pointer; box-shadow: 0 4px 0 #4a3567;
+
+  :global(body) { 
+    background: #81b29a; /* Sage Background */
+    margin: 0; padding: 0; width: 100vw; height: 100vh;
+    display: flex; align-items: center; justify-content: center;
+    font-family: 'Courier New', monospace; transition: background 1.2s ease;
+    overflow: hidden;
   }
-  button:active { transform: translateY(4px); box-shadow: none; }
+
+  :global(body.bonus-mode) { background: #3d405b; }
+
+  .game-container { 
+    background: #f4f1de; /* Cream Paper foreground */
+    padding: 20px; border-radius: 20px; text-align: center; 
+    border: 8px solid #3d405b; width: 92%; max-width: 400px; 
+    position: relative; box-shadow: 0 10px 0 #2b2d42;
+    z-index: 10;
+  }
+
+  .bonus-ui { border-color: #e07a5f; box-shadow: 0 10px 0 #be634a; }
+
+  .internal-header { 
+    color: #3d405b; letter-spacing: 5px; font-weight: bold; font-size: 1.1rem; 
+    margin: 0 0 15px 0; text-transform: uppercase;
+  }
+  .bonus-ui .internal-header { color: #e07a5f; }
+
+  .grid { display: grid; grid-template-columns: repeat(5, 1fr); gap: 8px; margin: 10px 0; }
+  
+  .cell { 
+    position: relative; aspect-ratio: 1; background: #fff; border-radius: 10px; 
+    display: flex; align-items: center; justify-content: center; 
+    border-bottom: 3px solid #e0d7c1;
+  }
+
+  .is-winning { background: #f2cc8f; border-color: #e07a5f; animation: pulse 0.8s infinite alternate; }
+  @keyframes pulse { from { transform: scale(1); } to { transform: scale(1.04); } }
+
+  .win-overlay {
+    position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
+    width: 120%; padding: 30px 0; z-index: 1000;
+    background: #3d405b; color: #f4f1de; border-radius: 10px; border: 4px solid #f2cc8f;
+  }
+
+  .control-panel { background: #3d405b; color: #f4f1de; border-radius: 12px; padding: 12px; margin-top: 10px; }
+
+  .spin-btn { 
+    background: #e07a5f; color: white; border: none; border-radius: 8px; 
+    padding: 10px; width: 100%; font-weight: bold; cursor: pointer; font-size: 1.1rem;
+    box-shadow: 0 4px 0 #be634a; transition: 0.1s;
+  }
+  .spin-btn:active { transform: translateY(3px); box-shadow: 0 1px 0 #be634a; }
 </style>
+
+<svelte:body class:bonus-mode={bonusSpins > 0} />
+
+<div class="game-container" class:bonus-ui={bonusSpins > 0}>
+  <div class="internal-header">
+    {bonusSpins > 0 ? '🍵 DEEP FOCUS' : 'LOFI LIBRARY'}
+  </div>
+
+  {#if showBanner}
+    <div class="win-overlay" in:fly={{y: 30}} out:fade>
+      <div style="font-size: 1.6rem; font-weight: bold;">{winType}</div>
+      <div style="font-size: 1.4rem; color: #f2cc8f;">${lastWin.toFixed(2)}</div>
+    </div>
+  {/if}
+
+  <div class="grid">
+    {#each grid as s, i (s.key)}
+      <div class="cell" class:is-winning={winningIndices.has(i)} in:fly={{ y: -30, duration: 400 }}>
+        <img src="/{s.image}" alt="" style="width: 80%;" />
+        {#if s.isWild}
+          <div style="position: absolute; bottom: 0; width: 100%; background: #e07a5f; color: white; font-size: 7px; padding: 2px 0;">WILD</div>
+        {/if}
+      </div>
+    {/each}
+  </div>
+
+  <div class="control-panel">
+    <div style="display: flex; justify-content: space-between; font-size: 0.75rem; margin-bottom: 8px;">
+      <span>CREDITS: ${balance.toFixed(2)}</span>
+      <span>WIN: ${lastWin.toFixed(2)}</span>
+    </div>
+    <div style="display: flex; gap: 8px; align-items: center;">
+      <div style="flex: 1; text-align: left; font-size: 0.65rem; color: #f2cc8f;">
+        BET: ${bet.toFixed(2)} <br/>
+        {bonusSpins > 0 ? 'FREE SESSIONS: ' + bonusSpins : 'CHILL & SPIN'}
+      </div>
+      <button class="spin-btn" on:click={spin} disabled={showBanner}>
+        {bonusSpins > 0 ? 'FREE' : 'SPIN'}
+      </button>
+    </div>
+  </div>
+</div>
