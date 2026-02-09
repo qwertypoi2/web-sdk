@@ -1,5 +1,5 @@
 <script>
-  import { onMount } from 'svelte';
+  import { onMount, onDestroy } from 'svelte';
   import { fly, scale, fade } from 'svelte/transition';
 
   let grid = [];
@@ -16,11 +16,12 @@
   let showWinBanner = false;
   let bannerText = "MATCH!";
   let showMegaWin = false;
-  let isMuted = false;
 
-  // --- AUDIO SETTINGS ---
-  let musicVolume = 0.15; 
-  let sfxVolume = 0.45;   
+  // --- INDEPENDENT AUDIO CONTROLS ---
+  let musicEnabled = true;
+  let sfxEnabled = true;
+  let musicVolume = 0.05; 
+  let sfxVolume = 0.85;   
   let bgMusic;
   let sfxCache = {};
 
@@ -45,8 +46,7 @@
   const betOptions = [0.10, 0.20, 0.50, 0.80, 1.00, 2.00, 5.00, 10.00];
 
   function preloadSFX() {
-    const files = ['spin.wav', 'land.wav', 'win.wav', 'poof.wav'];
-    files.forEach(file => {
+    ['spin.wav', 'land.wav', 'win.wav', 'poof.wav'].forEach(file => {
       const audio = new Audio(`/${file}`);
       audio.preload = 'auto';
       sfxCache[file] = audio;
@@ -54,7 +54,7 @@
   }
 
   function playSFX(file, volAdj = 1.0, pitch = 1.0) {
-    if (isMuted || !sfxCache[file]) return;
+    if (!sfxEnabled || !sfxCache[file] || document.hidden) return;
     const instance = sfxCache[file].cloneNode();
     instance.volume = sfxVolume * volAdj;
     instance.preservesPitch = false;
@@ -62,28 +62,34 @@
     instance.play().catch(() => {});
   }
 
-  function toggleMute() {
-    isMuted = !isMuted;
+  function toggleMusic() {
+    musicEnabled = !musicEnabled;
     if (bgMusic) {
-      if (isMuted) bgMusic.pause();
+      if (!musicEnabled) bgMusic.pause();
       else bgMusic.play().catch(() => {});
     }
   }
 
-  function wait(ms) { return new Promise(r => setTimeout(r, isTurbo ? ms / 3 : ms)); }
-
-  function getRandomSymbol() {
-    const pool = [];
-    symbols.forEach(s => { for (let i = 0; i < s.weight; i++) pool.push(s); });
-    return { ...pool[Math.floor(Math.random() * pool.length)], key: Math.random() };
+  function handleVisibilityChange() {
+    if (!bgMusic) return;
+    if (document.hidden) {
+      bgMusic.pause();
+    } else if (musicEnabled) {
+      bgMusic.play().catch(() => {});
+    }
   }
 
   async function spin() {
+    if (bgMusic && bgMusic.paused && musicEnabled) {
+      bgMusic.play().catch(() => {});
+    }
     if (isSpinning && !isAutoPlaying) return; 
     if (balance < bet) { isAutoPlaying = false; return alert("Low balance!"); }
+    
     playSFX('spin.wav', 1.0); 
     showWinBanner = false; showMegaWin = false; isSpinning = true; 
     displayedSessionWin = 0; actualSessionWin = 0; tumbleMultiplier = 1; balance -= bet;
+    
     grid = Array.from({ length: 25 }, () => null);
     for(let col=0; col<5; col++) {
       for(let row=0; row<5; row++) { grid[row * 5 + col] = getRandomSymbol(); }
@@ -107,12 +113,12 @@
       winningIndices = wins; 
       actualSessionWin += currentMatchWin; 
       balance += currentMatchWin;
-      playSFX('win.wav', 1.2, 1.0 + (tumbleMultiplier * 0.1)); 
+      playSFX('win.wav', 0.9, 1.0 + (tumbleMultiplier * 0.1)); 
       bannerText = tumbleMultiplier > 1 ? `COMBO x${tumbleMultiplier}!` : "MATCH!";
       showWinBanner = true; displayedSessionWin = actualSessionWin;
       await wait(1800);
+      playSFX('poof.wav', 1.0);
       poofIndices = new Set(wins);
-      playSFX('poof.wav', 0.8);
       grid = grid.map((s, i) => wins.has(i) ? null : s);
       winningIndices = new Set();
       await wait(500);
@@ -128,20 +134,12 @@
     }
   }
 
-  function tumbleDown() {
-    let newGrid = [...grid];
-    for (let col = 0; col < 5; col++) {
-      let columnContent = [];
-      for (let row = 4; row >= 0; row--) {
-        let idx = row * 5 + col;
-        if (newGrid[idx]) columnContent.unshift(newGrid[idx]);
-      }
-      while (columnContent.length < 5) columnContent.unshift(getRandomSymbol());
-      for (let row = 0; row < 5; row++) newGrid[row * 5 + col] = columnContent[row];
-    }
-    grid = newGrid;
+  function wait(ms) { return new Promise(r => setTimeout(r, isTurbo ? ms / 3 : ms)); }
+  function getRandomSymbol() {
+    const pool = [];
+    symbols.forEach(s => { for (let i = 0; i < s.weight; i++) pool.push(s); });
+    return { ...pool[Math.floor(Math.random() * pool.length)], key: Math.random() };
   }
-
   function findWins() {
     let visited = new Set(); let wins = new Set(); let totalPayout = 0;
     for (let i = 0; i < 25; i++) {
@@ -165,7 +163,19 @@
     }
     return { totalWin: totalPayout, wins };
   }
-
+  function tumbleDown() {
+    let newGrid = [...grid];
+    for (let col = 0; col < 5; col++) {
+      let columnContent = [];
+      for (let row = 4; row >= 0; row--) {
+        let idx = row * 5 + col;
+        if (newGrid[idx]) columnContent.unshift(newGrid[idx]);
+      }
+      while (columnContent.length < 5) columnContent.unshift(getRandomSymbol());
+      for (let row = 0; row < 5; row++) newGrid[row * 5 + col] = columnContent[row];
+    }
+    grid = newGrid;
+  }
   function toggleAuto() {
     if (isAutoPlaying) { isAutoPlaying = false; autoSpinsRemaining = 0; }
     else { showAutoModal = true; }
@@ -177,55 +187,21 @@
     bgMusic = new Audio('/bg_loop.mp3');
     bgMusic.loop = true;
     bgMusic.volume = musicVolume;
-    const startAudio = () => {
-      if (!isMuted) bgMusic.play().catch(() => {});
-      window.removeEventListener('click', startAudio);
-      window.removeEventListener('touchstart', startAudio);
-    };
-    window.addEventListener('click', startAudio);
-    window.addEventListener('touchstart', startAudio);
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+  });
+
+  onDestroy(() => {
+    if (typeof document !== 'undefined') {
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+    }
   });
 </script>
-
-<style>
-  :global(body) { margin: 0; padding: 0; height: 100vh; width: 100vw; background-color: #81b29a; display: flex; align-items: flex-end; justify-content: center; overflow: hidden; }
-  .bg-fixed { position: fixed; inset: 0; background: url('/background.png') no-repeat center bottom / auto 100%; z-index: -1; animation: bg-breath 20s ease-in-out infinite; }
-  @keyframes bg-breath { 0%, 100% { transform: scale(1); } 50% { transform: scale(1.02); } }
-  .game-container { background: rgba(255, 253, 250, 0.94); padding: 12px; border-radius: 20px; width: 94%; max-width: 420px; position: relative; box-shadow: 0 12px 45px rgba(0,0,0,0.55); border: 5px solid #3d405b; margin-bottom: 1.5vh; z-index: 5; }
-  
-  .on-screen-win { position: absolute; top: 40%; left: 50%; transform: translate(-50%, -50%); color: white; padding: 15px 25px; border-radius: 50px; font-size: 1.6rem; font-weight: 900; z-index: 500; border: 4px solid white; text-align: center; pointer-events: none; animation: banner-slam 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275); transition: background 0.5s, box-shadow 0.5s; }
-  .on-screen-win.level-1 { background: #e07a5f; box-shadow: 0 8px 0 #be634a; }
-  .on-screen-win.level-2 { background: #f2cc8f; box-shadow: 0 8px 0 #d4a35d; color: #3d405b; border-color: #3d405b; }
-  .on-screen-win.level-3 { background: #9b5de5; box-shadow: 0 8px 0 #6a3ab1; animation: banner-slam 0.4s, pulse-purple 1.5s infinite alternate; }
-  @keyframes pulse-purple { from { filter: brightness(1); } to { filter: brightness(1.3); } }
-  @keyframes banner-slam { 0% { transform: translate(-50%, -50%) scale(0.5); opacity: 0; } 100% { transform: translate(-50%, -50%) scale(1); opacity: 1; } }
-
-  .grid { display: grid; grid-template-columns: repeat(5, 1fr); gap: 8px; margin: 10px 0; background: #fdfaf5; padding: 8px; border-radius: 16px; border: 2px solid #e0d7c1; min-height: 320px; }
-  .cell { aspect-ratio: 1; background: #fff; border-radius: 10px; display: flex; align-items: center; justify-content: center; border: 2px solid #f2ecde; position: relative; overflow: visible; }
-  .cell.winning { background: #fdf4e3 !important; border-color: #f2cc8f !important; box-shadow: inset 0 0 15px #f2cc8f; z-index: 2; }
-  .cell.winning img { animation: jitter 0.15s infinite linear; filter: drop-shadow(0 0 5px #f2cc8f); }
-  .poof { position: absolute; width: 100%; height: 100%; pointer-events: none; z-index: 10; background: radial-gradient(circle, #f2cc8f 10%, transparent 60%); border-radius: 50%; animation: particle-poof 0.5s ease-out forwards; }
-  @keyframes particle-poof { 0% { transform: scale(0.2); opacity: 0.8; } 50% { transform: scale(1.5); opacity: 0.4; } 100% { transform: scale(2); opacity: 0; } }
-  @keyframes jitter { 0% { transform: translate(0,0); } 25% { transform: translate(1px, 1px); } 50% { transform: translate(-1px, -1px); } 75% { transform: translate(1px, -1px); } 100% { transform: translate(0,0); } }
-
-  .panel { background: #3d405b; color: #f4f1de; border-radius: 14px; padding: 12px; }
-  .controls { display: flex; gap: 6px; }
-  .side-btn { background: #81b29a; border: none; border-radius: 8px; min-width: 48px; color: white; font-weight: 900; font-size: 0.8rem; cursor: pointer; }
-  .side-btn.active { background: #f2cc8f !important; color: #3d405b !important; }
-  .spin-btn { flex: 1; background: #e07a5f; color: white; border: none; border-radius: 8px; height: 52px; font-weight: 900; font-size: 1.2rem; box-shadow: 0 4px 0 #be634a; }
-  .modal-backdrop { position: fixed; inset: 0; background: rgba(0,0,0,0.85); z-index: 100000; display: flex; align-items: center; justify-content: center; }
-  .modal-box { background: #3d405b; padding: 25px; border-radius: 20px; width: 85%; max-width: 360px; color: white; border: 4px solid #81b29a; position: relative; text-align: center; max-height: 80vh; overflow-y: auto; }
-  .close-x { position: absolute; top: 10px; right: 10px; width: 32px; height: 32px; background: #e07a5f; color: white; border-radius: 50%; border: 2px solid white; font-weight: 900; cursor: pointer; display: flex; align-items: center; justify-content: center; z-index: 10; }
-</style>
 
 <div class="bg-fixed"></div>
 <div class="game-container">
   <div style="font-weight:900; color:#3d405b; text-align:center; letter-spacing:3px; font-size: 1.2rem; text-transform: uppercase;">LOFI LIBRARY</div>
   {#if showWinBanner}
-    <div class="on-screen-win 
-      {tumbleMultiplier <= 2 ? 'level-1' : ''} 
-      {tumbleMultiplier > 2 && tumbleMultiplier <= 4 ? 'level-2' : ''} 
-      {tumbleMultiplier > 4 ? 'level-3' : ''}" in:scale out:fade>
+    <div class="on-screen-win {tumbleMultiplier <= 2 ? 'level-1' : ''} {tumbleMultiplier > 2 && tumbleMultiplier <= 4 ? 'level-2' : ''} {tumbleMultiplier > 4 ? 'level-3' : ''}" in:scale out:fade>
       <div style="font-size: 0.7rem; opacity: 0.9; text-transform: uppercase;">{bannerText}</div>
       ${actualSessionWin.toFixed(2)}
     </div>
@@ -250,9 +226,8 @@
     <div class="controls">
       <button class="side-btn" on:click={() => showInfoModal = true}>i</button>
       <button class="side-btn" class:active={isAutoPlaying} on:click={toggleAuto}>{isAutoPlaying ? autoSpinsRemaining : 'AUTO'}</button>
-      <button class="spin-btn" class:stop-mode={isAutoPlaying} on:click={() => isAutoPlaying ? toggleAuto() : spin()} disabled={isSpinning && !isAutoPlaying}> {isAutoPlaying ? 'STOP' : (isSpinning ? '...' : 'SPIN')} </button>
+      <button class="spin-btn" on:click={() => isAutoPlaying ? toggleAuto() : spin()} disabled={isSpinning && !isAutoPlaying}> {isAutoPlaying ? 'STOP' : (isSpinning ? '...' : 'SPIN')} </button>
       <button class="side-btn" class:active={isTurbo} on:click={() => isTurbo = !isTurbo}>⚡</button>
-      <button class="side-btn" on:click={toggleMute}>{isMuted ? '🔇' : '🔈'}</button>
       <button class="side-btn" on:click={() => showBetModal = true} disabled={isAutoPlaying}>${bet.toFixed(2)}</button>
     </div>
   </div>
@@ -262,23 +237,33 @@
   <div class="modal-backdrop" on:click|self={() => showInfoModal = false} transition:fade>
     <div class="modal-box" style="text-align: left;">
       <div class="close-x" on:click={() => showInfoModal = false}>✕</div>
-      <h3 style="text-align:center; color:#f2cc8f; margin:10px 0 10px 0;">LIBRARY RULES</h3>
-      <div style="font-size: 0.8rem; line-height: 1.3; margin-bottom: 15px;">
+      <h3 style="text-align:center; color:#f2cc8f; margin:10px 0;">LIBRARY SETTINGS</h3>
+      
+      <div style="background: rgba(0,0,0,0.2); padding: 12px; border-radius: 10px; margin-bottom: 15px;">
+        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom: 10px;">
+          <span>Music Loops</span>
+          <button on:click={toggleMusic} style="background: {musicEnabled ? '#81b29a' : '#e07a5f'}; border:none; color:white; padding:5px 10px; border-radius:5px; font-size:0.7rem; font-weight:900;">{musicEnabled ? 'ON' : 'OFF'}</button>
+        </div>
+        <div style="display:flex; justify-content:space-between; align-items:center;">
+          <span>Sound Effects</span>
+          <button on:click={() => sfxEnabled = !sfxEnabled} style="background: {sfxEnabled ? '#81b29a' : '#e07a5f'}; border:none; color:white; padding:5px 10px; border-radius:5px; font-size:0.7rem; font-weight:900;">{sfxEnabled ? 'ON' : 'OFF'}</button>
+        </div>
+      </div>
+
+      <div style="font-size: 0.8rem; line-height: 1.3; margin-bottom: 15px; opacity: 0.8;">
         <span style="color:#f2cc8f; font-weight:900;">CLUSTERS:</span> 4+ adjacent icons. <br>
-        <span style="color:#f2cc8f; font-weight:900;">TUMBLES:</span> Wins clear; gaps fill. <br>
-        <span style="color:#f2cc8f; font-weight:900;">MULTIPLIER:</span> Each tumble adds +1.
+        <span style="color:#f2cc8f; font-weight:900;">TUMBLES:</span> Wins clear; gaps fill.
       </div>
       <h3 style="text-align:center; color:#f2cc8f; margin:0 0 10px 0; border-top: 1px solid rgba(255,255,255,0.1); padding-top:10px;">PAYTABLE</h3>
       {#each symbols.filter(s => !s.isWild) as s}
         <div style="display:flex; justify-content:space-between; align-items:center; padding:5px 0; border-bottom:1px solid rgba(255,255,255,0.05);">
            <div style="display:flex; align-items:center; gap:8px;">
-              <img src="/{s.image}" alt="" style="width:22px; height:22px;" />
+              <img src="/{s.image}" alt="" style="width:20px; height:20px;" />
               <span>{s.id}</span>
            </div>
            <span>{s.val.toFixed(1)}x</span>
         </div>
       {/each}
-      <p style="text-align:center; font-size: 0.6rem; opacity: 0.5; margin-top:15px;">RTP: 96.45%</p>
     </div>
   </div>
 {/if}
@@ -310,3 +295,31 @@
     </div>
   </div>
 {/if}
+
+<style>
+  :global(body) { margin: 0; padding: 0; height: 100vh; width: 100vw; background-color: #81b29a; display: flex; align-items: flex-end; justify-content: center; overflow: hidden; }
+  .bg-fixed { position: fixed; inset: 0; background: url('/background.png') no-repeat center bottom / auto 100%; z-index: -1; animation: bg-breath 20s ease-in-out infinite; }
+  @keyframes bg-breath { 0%, 100% { transform: scale(1); } 50% { transform: scale(1.02); } }
+  .game-container { background: rgba(255, 253, 250, 0.94); padding: 12px; border-radius: 20px; width: 94%; max-width: 420px; position: relative; box-shadow: 0 12px 45px rgba(0,0,0,0.55); border: 5px solid #3d405b; margin-bottom: 1.5vh; z-index: 5; }
+  .on-screen-win { position: absolute; top: 40%; left: 50%; transform: translate(-50%, -50%); color: white; padding: 15px 25px; border-radius: 50px; font-size: 1.6rem; font-weight: 900; z-index: 500; border: 4px solid white; text-align: center; pointer-events: none; animation: banner-slam 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275); transition: background 0.5s, box-shadow 0.5s; }
+  .on-screen-win.level-1 { background: #e07a5f; box-shadow: 0 8px 0 #be634a; }
+  .on-screen-win.level-2 { background: #f2cc8f; box-shadow: 0 8px 0 #d4a35d; color: #3d405b; border-color: #3d405b; }
+  .on-screen-win.level-3 { background: #9b5de5; box-shadow: 0 8px 0 #6a3ab1; animation: banner-slam 0.4s, pulse-purple 1.5s infinite alternate; }
+  @keyframes pulse-purple { from { filter: brightness(1); } to { filter: brightness(1.3); } }
+  @keyframes banner-slam { 0% { transform: translate(-50%, -50%) scale(0.5); opacity: 0; } 100% { transform: translate(-50%, -50%) scale(1); opacity: 1; } }
+  .grid { display: grid; grid-template-columns: repeat(5, 1fr); gap: 8px; margin: 10px 0; background: #fdfaf5; padding: 8px; border-radius: 16px; border: 2px solid #e0d7c1; min-height: 320px; }
+  .cell { aspect-ratio: 1; background: #fff; border-radius: 10px; display: flex; align-items: center; justify-content: center; border: 2px solid #f2ecde; position: relative; overflow: visible; }
+  .cell.winning { background: #fdf4e3 !important; border-color: #f2cc8f !important; box-shadow: inset 0 0 15px #f2cc8f; z-index: 2; }
+  .cell.winning img { animation: jitter 0.15s infinite linear; filter: drop-shadow(0 0 5px #f2cc8f); }
+  .poof { position: absolute; width: 100%; height: 100%; pointer-events: none; z-index: 10; background: radial-gradient(circle, #f2cc8f 10%, transparent 60%); border-radius: 50%; animation: particle-poof 0.5s ease-out forwards; }
+  @keyframes particle-poof { 0% { transform: scale(0.2); opacity: 0.8; } 50% { transform: scale(1.5); opacity: 0.4; } 100% { transform: scale(2); opacity: 0; } }
+  @keyframes jitter { 0% { transform: translate(0,0); } 25% { transform: translate(1px, 1px); } 50% { transform: translate(-1px, -1px); } 75% { transform: translate(1px, -1px); } 100% { transform: translate(0,0); } }
+  .panel { background: #3d405b; color: #f4f1de; border-radius: 14px; padding: 12px; }
+  .controls { display: flex; gap: 6px; }
+  .side-btn { background: #81b29a; border: none; border-radius: 8px; min-width: 48px; color: white; font-weight: 900; font-size: 0.8rem; cursor: pointer; }
+  .side-btn.active { background: #f2cc8f !important; color: #3d405b !important; }
+  .spin-btn { flex: 1; background: #e07a5f; color: white; border: none; border-radius: 8px; height: 52px; font-weight: 900; font-size: 1.2rem; box-shadow: 0 4px 0 #be634a; }
+  .modal-backdrop { position: fixed; inset: 0; background: rgba(0,0,0,0.85); z-index: 100000; display: flex; align-items: center; justify-content: center; }
+  .modal-box { background: #3d405b; padding: 25px; border-radius: 20px; width: 85%; max-width: 360px; color: white; border: 4px solid #81b29a; position: relative; text-align: center; max-height: 80vh; overflow-y: auto; }
+  .close-x { position: absolute; top: 10px; right: 10px; width: 32px; height: 32px; background: #e07a5f; color: white; border-radius: 50%; border: 2px solid white; font-weight: 900; cursor: pointer; display: flex; align-items: center; justify-content: center; z-index: 10; }
+</style>
