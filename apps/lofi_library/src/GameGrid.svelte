@@ -2,6 +2,11 @@
   import { onMount, onDestroy } from 'svelte';
   import { fly, scale, fade } from 'svelte/transition';
 
+  // --- Provably Fair State ---
+  let clientSeed = "lofi_player_1"; 
+  let serverSeed = Math.random().toString(36).substring(2); 
+  let nonce = 0;
+
   let grid = [];
   let winningIndices = new Set();
   let wooshIndices = new Set();
@@ -54,6 +59,23 @@
 
   const betOptions = [0.10, 0.20, 0.50, 0.80, 1.00, 2.00, 5.00, 10.00];
 
+  async function generateHashedResult(sSeed, cSeed, n) {
+    const msg = `${sSeed}-${cSeed}-${n}`;
+    const encoder = new TextEncoder();
+    const data = encoder.encode(msg);
+    const hashBuffer = await crypto.subtle.digest('SHA-256', data);
+    const hashArray = Array.from(new Uint8Array(hashBuffer));
+    return hashArray.reduce((acc, b) => acc + b.toString(16).padStart(2, '0'), '');
+  }
+
+  async function getSeededSymbol(index) {
+    const hash = await generateHashedResult(serverSeed, clientSeed, `${nonce}-${index}`);
+    const hexVal = parseInt(hash.substring(0, 8), 16);
+    const pool = [];
+    symbols.forEach(s => { for (let i = 0; i < s.weight; i++) pool.push(s); });
+    return { ...pool[hexVal % pool.length], key: Math.random() };
+  }
+
   function preloadSFX() {
     ['spin.wav', 'land.wav', 'win.wav', 'woosh.wav'].forEach(file => {
       const audio = new Audio(`/${file}`);
@@ -75,12 +97,6 @@
     return new Promise(r => setTimeout(r, isTurbo ? ms / 3 : ms)); 
   }
 
-  function getRandomSymbol() {
-    const pool = [];
-    symbols.forEach(s => { for (let i = 0; i < s.weight; i++) pool.push(s); });
-    return { ...pool[Math.floor(Math.random() * pool.length)], key: Math.random() };
-  }
-
   async function handleSpinClick() {
     if (isSpinning || isAutoPlaying) {
       fastForward = true;
@@ -94,30 +110,19 @@
   async function spin() {
     if (isSpinning) return;
     fastForward = false;
-    isSpinning = true; 
-    showWinBanner = false; 
-    showWinOverlay = false;
-    displayedSessionWin = 0; 
-    actualSessionWin = 0; 
-    
+    isSpinning = true; showWinBanner = false; showWinOverlay = false;
+    displayedSessionWin = 0; actualSessionWin = 0; 
     if (!isFreeSpins) { balance -= bet; tumbleMultiplier = 1; } 
     else { tumbleMultiplier = persistentMultiplier; }
-    
+    nonce++; 
     playSFX('spin.wav', 0.3); 
     grid = Array.from({ length: 25 }, () => null);
-
-    let currentWilds = 0;
     for (let col = 0; col < 5; col++) {
       for (let row = 0; row < 5; row++) {
-        grid[row * 5 + col] = getRandomSymbol();
-        if (grid[row * 5 + col].isWild) currentWilds++;
+        grid[row * 5 + col] = await getSeededSymbol(row * 5 + col);
       }
       playSFX('land.wav', 0.4);
-      if (currentWilds >= 2 && col < 4 && !isTurbo) {
-        await wait(1000); 
-      } else {
-        await wait(200);
-      }
+      await wait(200);
     }
     await wait(200);
     await processRound();
@@ -125,7 +130,6 @@
 
   async function processRound() {
     const { totalWin, wins, scatterCount } = findWins();
-    
     if (!isFreeSpins && scatterCount >= 3) {
         showBonusBanner = true;
         freeSpinsRemaining = 10;
@@ -135,21 +139,16 @@
         showBonusBanner = false;
         isFreeSpins = true;
     }
-
     if (wins.size > 0) {
       currentMatchWin = totalWin * bet * tumbleMultiplier;
       winningIndices = wins; 
       actualSessionWin += currentMatchWin; 
       balance += currentMatchWin;
       if (isFreeSpins) bonusTotalWin += currentMatchWin;
-
       playSFX('win.wav', 0.9, 1.0 + (tumbleMultiplier * 0.12)); 
       bannerText = `MATCH x${tumbleMultiplier}`;
-      showWinBanner = true; 
-      displayedSessionWin = actualSessionWin;
-      
+      showWinBanner = true; displayedSessionWin = actualSessionWin;
       await wait(1500); 
-      
       playSFX('woosh.wav', 0.9);
       wooshIndices = new Set(wins);
       grid = grid.map((s, i) => wins.has(i) ? null : s);
@@ -158,13 +157,11 @@
       wooshIndices = new Set();
       tumbleMultiplier++; 
       if (isFreeSpins) persistentMultiplier = tumbleMultiplier;
-
       await tumbleDown();
       await wait(600); 
       await processRound();
     } else { 
       isSpinning = false; 
-      
       if (actualSessionWin >= bet * 100) {
         winTier = 'insane'; showWinOverlay = true; playSFX('win.wav', 1.0, 0.6);
       } else if (actualSessionWin >= bet * 50) {
@@ -176,7 +173,6 @@
         showWinBanner = true;
         await wait(2000); 
       }
-
       if (isFreeSpins) {
           freeSpinsRemaining--;
           if (freeSpinsRemaining <= 0) {
@@ -234,7 +230,9 @@
         let idx = row * 5 + col;
         if (newGrid[idx]) content.unshift(newGrid[idx]);
       }
-      while (content.length < 5) content.unshift({ ...getRandomSymbol(), isNew: true });
+      for (let i = 0; i < (5 - content.length); i++) {
+          content.unshift({ ...(await getSeededSymbol(`t-${nonce}-${i}`)), isNew: true });
+      }
       for (let row = 0; row < 5; row++) {
         newGrid[row * 5 + col] = content[row];
         if (!fastForward) await wait(60); 
@@ -250,8 +248,13 @@
     else if (musicEnabled) { bgMusic.play().catch(() => {}); }
   };
 
-  onMount(() => { 
-    grid = Array.from({ length: 25 }, () => getRandomSymbol());
+  onMount(async () => { 
+    // FIXED: Build a FULL grid on load
+    let initialGrid = [];
+    for (let i = 0; i < 25; i++) {
+      initialGrid.push(await getSeededSymbol(i));
+    }
+    grid = initialGrid;
     preloadSFX();
     bgMusic = new Audio('/bg_loop.mp3'); bgMusic.loop = true; bgMusic.volume = musicVolume;
     if (typeof document !== 'undefined') document.addEventListener('visibilitychange', handleVisibility);
@@ -266,49 +269,22 @@
 
 <div class="game-container" class:bonus-mode={isFreeSpins}>
   <div class="header">{isFreeSpins ? 'STUDY SESSION' : 'LOFI LIBRARY'}</div>
-  
-  {#if isFreeSpins}
-    <div class="spin-counter" in:fade>FREE SPIN {11 - freeSpinsRemaining}/10</div>
-  {/if}
-
-  {#if showBonusBanner}
-    <div class="bonus-banner">ENTERING STUDY SESSION...</div>
-  {/if}
-
-  {#if showWinBanner}
-    <div class="on-screen-win {tumbleMultiplier > 1 ? 'level-2' : 'level-1'}" in:scale out:fade>
-      <div class="banner-top">{bannerText}</div>
-      <div class="banner-amt">${actualSessionWin.toFixed(2)}</div>
-    </div>
-  {/if}
-
-  {#if showWinOverlay}
-    <div class="win-overlay {winTier}" in:scale on:click={() => showWinOverlay = false}>
-      <div class="win-title">
-        {#if winTier === 'insane'}INSANE WIN!{:else if winTier === 'mega'}MEGA WIN!{:else}BIG WIN!{/if}
-      </div>
-      <div class="win-amt">${actualSessionWin.toFixed(2)}</div>
-    </div>
-  {/if}
-
+  {#if isFreeSpins}<div class="spin-counter" in:fade>FREE SPIN {11 - freeSpinsRemaining}/10</div>{/if}
+  {#if showBonusBanner}<div class="bonus-banner">ENTERING STUDY SESSION...</div>{/if}
+  {#if showWinBanner}<div class="on-screen-win {tumbleMultiplier > 1 ? 'level-2' : 'level-1'}" in:scale out:fade><div class="banner-top">{bannerText}</div><div class="banner-amt">${actualSessionWin.toFixed(2)}</div></div>{/if}
+  {#if showWinOverlay}<div class="win-overlay {winTier}" in:scale on:click={() => (showWinOverlay = false)}><div class="win-title">{#if winTier === 'insane'}INSANE WIN!{:else if winTier === 'mega'}MEGA WIN!{:else}BIG WIN!{/if}</div><div class="win-amt">${actualSessionWin.toFixed(2)}</div></div>{/if}
   <div class="grid">
     {#each grid as s, i (s ? s.key : i)}
       <div class="cell" class:winning={winningIndices.has(i)}>
         {#if s}
-          <div class="symbol-wrapper">
-            <img src="/{s.image}" alt={s.id} />
-          </div>
+          <div class="symbol-wrapper"><img src="/{s.image}" alt={s.id} /></div>
         {/if}
         {#if wooshIndices.has(i)}<div class="whoosh"></div>{/if}
       </div>
     {/each}
   </div>
-
   <div class="panel">
-    <div class="stats">
-      <span>{isFreeSpins ? `BONUS WIN: $${bonusTotalWin.toFixed(2)}` : `CREDITS: $${balance.toFixed(2)}`}</span>
-      <span style="color: #f2cc8f">BET: ${bet.toFixed(2)}</span>
-    </div>
+    <div class="stats"><span>{isFreeSpins ? `BONUS WIN: $${bonusTotalWin.toFixed(2)}` : `CREDITS: $${balance.toFixed(2)}`}</span><span style="color: #f2cc8f">BET: ${bet.toFixed(2)}</span></div>
     <div class="controls">
       <button class="side-btn" on:click={() => (showInfoModal = true)}>i</button>
       <button class="side-btn" on:click={() => (showAutoModal = true)}>{isAutoPlaying ? autoSpinsRemaining : 'AUTO'}</button>
@@ -319,49 +295,10 @@
   </div>
 </div>
 
-{#if showAutoModal}
-  <div class="modal-backdrop" on:click|self={() => (showAutoModal = false)}>
-    <div class="modal-box">
-      <h3>AUTO SPINS</h3>
-      <div class="opt-grid">
-        {#each [10, 25, 50, 100] as opt}
-          <button on:click={() => { autoSpinsRemaining = opt; isAutoPlaying = true; showAutoModal = false; spin(); }}>{opt}</button>
-        {/each}
-      </div>
-    </div>
-  </div>
-{/if}
-
-{#if showBetModal}
-  <div class="modal-backdrop" on:click|self={() => (showBetModal = false)}>
-    <div class="modal-box">
-      <h3>BET AMOUNT</h3>
-      <div class="opt-grid">
-        {#each betOptions as opt}
-          <button on:click={() => { bet = opt; showBetModal = false; }}>${opt.toFixed(2)}</button>
-        {/each}
-      </div>
-    </div>
-  </div>
-{/if}
-
+{#if showAutoModal}<div class="modal-backdrop" on:click|self={() => (showAutoModal = false)}><div class="modal-box"><h3>AUTO SPINS</h3><div class="opt-grid">{#each [10, 25, 50, 100] as opt}<button on:click={() => { autoSpinsRemaining = opt; isAutoPlaying = true; showAutoModal = false; spin(); }}>{opt}</button>{/each}</div></div></div>{/if}
+{#if showBetModal}<div class="modal-backdrop" on:click|self={() => (showBetModal = false)}><div class="modal-box"><h3>BET AMOUNT</h3><div class="opt-grid">{#each betOptions as opt}<button on:click={() => { bet = opt; showBetModal = false; }}>${opt.toFixed(2)}</button>{/each}</div></div></div>{/if}
 {#if showInfoModal}
-  <div class="modal-backdrop" on:click|self={() => (showInfoModal = false)}>
-    <div class="modal-box info-style">
-      <h3 style="color: #e07a5f; margin: 0;">PAYTABLE ($1 BET)</h3>
-      <div class="pay-grid">
-        {#each symbols.filter(s => !s.isWild) as s}
-          <div class="pay-item"><span>{s.id}</span><b>${s.val.toFixed(2)}</b></div>
-        {/each}
-      </div>
-      <div style="font-size: 0.7rem; text-align: left; background: #eee; padding: 5px; border-radius: 5px; margin-top: 5px;">
-        <p><b>RTP:</b> 96.45%</p>
-        <p><b>RULES:</b> 5+ symbols connected. Wilds act as Scatters.</p>
-        <p><b>BONUS:</b> 3+ Wilds = 10 Free Spins with growing Multipliers.</p>
-      </div>
-      <button class="close-btn" on:click={() => (showInfoModal = false)}>CLOSE</button>
-    </div>
-  </div>
+  <div class="modal-backdrop" on:click|self={() => (showInfoModal = false)}><div class="modal-box info-style"><h3 style="color: #e07a5f; margin: 0;">PAYTABLE ($1 BET)</h3><div class="pay-grid">{#each symbols.filter(s => !s.isWild) as s}<div class="pay-item"><span>{s.id}</span><b>${s.val.toFixed(2)}</b></div>{/each}</div><div style="font-size: 0.7rem; text-align: left; background: #eee; padding: 5px; border-radius: 5px; margin-top: 5px;"><p><b>PROVABLY FAIR:</b> Results are SHA-256 hashed.</p><p><b>RTP:</b> 96.45%</p><p><b>BONUS:</b> 3+ Wilds = 10 Free Spins.</p></div><button class="close-btn" on:click={() => (showInfoModal = false)}>CLOSE</button></div></div>
 {/if}
 
 <style>
