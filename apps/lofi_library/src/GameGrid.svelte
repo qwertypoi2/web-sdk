@@ -4,7 +4,7 @@
 
   let grid = [];
   let winningIndices = new Set();
-  let poofIndices = new Set();
+  let wooshIndices = new Set();
   let balance = 1000.00;
   let bet = 1.00;
   let displayedSessionWin = 0.00;
@@ -15,9 +15,18 @@
   let currentMatchWin = 0;
   let showWinBanner = false;
   let bannerText = "MATCH!";
-  let showMegaWin = false;
+  let shakeGrid = false;
+  let fastForward = false;
 
-  // --- INDEPENDENT AUDIO CONTROLS ---
+  let showWinOverlay = false;
+  let winTier = 'big';
+
+  let isFreeSpins = false;
+  let freeSpinsRemaining = 0;
+  let persistentMultiplier = 1;
+  let showBonusBanner = false;
+  let bonusTotalWin = 0; 
+
   let musicEnabled = true;
   let sfxEnabled = true;
   let musicVolume = 0.05; 
@@ -32,250 +41,291 @@
   let isAutoPlaying = false;
 
   const symbols = [
-    { id: 'Cabin', image: 'cabin.png', val: 5.0, weight: 3 },
-    { id: 'Cat', image: 'cat.png', val: 3.0, weight: 5 },
-    { id: 'Vinyl', image: 'record.png', val: 1.0, weight: 7 },
-    { id: 'Headphones', image: 'headphones.png', val: 0.8, weight: 8 },
-    { id: 'Book', image: 'book.png', val: 0.6, weight: 10 },
-    { id: 'Succulent', image: 'succulent.png', val: 0.4, weight: 12 },
-    { id: 'Matcha', image: 'coffee.png', val: 0.3, weight: 14 },
-    { id: 'Candle', image: 'candle.png', val: 0.2, weight: 16 },
-    { id: 'Wild', image: 'wild.png', isWild: true, weight: 2 } 
+    { id: 'Cabin', image: 'cabin.png', val: 10.0, weight: 3 },
+    { id: 'Cat', image: 'cat.png', val: 5.0, weight: 5 },
+    { id: 'Vinyl', image: 'record.png', val: 2.0, weight: 8 },
+    { id: 'Headphones', image: 'headphones.png', val: 1.0, weight: 10 },
+    { id: 'Book', image: 'book.png', val: 0.50, weight: 12 },
+    { id: 'Succulent', image: 'succulent.png', val: 0.25, weight: 15 },
+    { id: 'Matcha', image: 'coffee.png', val: 0.15, weight: 18 },
+    { id: 'Candle', image: 'candle.png', val: 0.10, weight: 20 },
+    { id: 'Wild', image: 'wild.png', isWild: true, weight: 1 } 
   ];
 
   const betOptions = [0.10, 0.20, 0.50, 0.80, 1.00, 2.00, 5.00, 10.00];
 
   function preloadSFX() {
-    ['spin.wav', 'land.wav', 'win.wav', 'poof.wav'].forEach(file => {
+    ['spin.wav', 'land.wav', 'win.wav', 'woosh.wav'].forEach(file => {
       const audio = new Audio(`/${file}`);
       audio.preload = 'auto';
       sfxCache[file] = audio;
     });
   }
 
-  function playSFX(file, volAdj = 1.0, pitch = 1.0) {
-    if (!sfxEnabled || !sfxCache[file] || document.hidden) return;
+  function playSFX(file, volAdj = 1.0, pitchAdj = 1.0) {
+    if (!sfxEnabled || !sfxCache[file] || (typeof document !== 'undefined' && document.hidden)) return;
     const instance = sfxCache[file].cloneNode();
     instance.volume = sfxVolume * volAdj;
-    instance.preservesPitch = false;
-    instance.playbackRate = isTurbo ? pitch * 1.15 : pitch;
+    instance.playbackRate = (isTurbo ? 1.5 : 1.0) * pitchAdj;
     instance.play().catch(() => {});
   }
 
-  function toggleMusic() {
-    musicEnabled = !musicEnabled;
-    if (bgMusic) {
-      if (!musicEnabled) bgMusic.pause();
-      else bgMusic.play().catch(() => {});
-    }
+  function wait(ms) { 
+    if (fastForward) return Promise.resolve();
+    return new Promise(r => setTimeout(r, isTurbo ? ms / 3 : ms)); 
   }
 
-  function handleVisibilityChange() {
-    if (!bgMusic) return;
-    if (document.hidden) {
-      bgMusic.pause();
-    } else if (musicEnabled) {
-      bgMusic.play().catch(() => {});
-    }
-  }
-
-  async function spin() {
-    if (bgMusic && bgMusic.paused && musicEnabled) {
-      bgMusic.play().catch(() => {});
-    }
-    if (isSpinning && !isAutoPlaying) return; 
-    if (balance < bet) { isAutoPlaying = false; return alert("Low balance!"); }
-    
-    playSFX('spin.wav', 1.0); 
-    showWinBanner = false; showMegaWin = false; isSpinning = true; 
-    displayedSessionWin = 0; actualSessionWin = 0; tumbleMultiplier = 1; balance -= bet;
-    
-    grid = Array.from({ length: 25 }, () => null);
-    for(let col=0; col<5; col++) {
-      for(let row=0; row<5; row++) { grid[row * 5 + col] = getRandomSymbol(); }
-      playSFX('land.wav', 0.4, 0.9 + (col * 0.05)); 
-      await wait(180); 
-    }
-    await wait(800);
-    await processRound();
-    if (isAutoPlaying) {
-      if (autoSpinsRemaining > 0) {
-        autoSpinsRemaining--;
-        if (isAutoPlaying) setTimeout(spin, isTurbo ? 800 : 1800);
-      } else { isAutoPlaying = false; }
-    }
-  }
-
-  async function processRound() {
-    const { totalWin, wins } = findWins();
-    if (wins.size > 0) {
-      currentMatchWin = totalWin * bet * tumbleMultiplier;
-      winningIndices = wins; 
-      actualSessionWin += currentMatchWin; 
-      balance += currentMatchWin;
-      playSFX('win.wav', 0.9, 1.0 + (tumbleMultiplier * 0.1)); 
-      bannerText = tumbleMultiplier > 1 ? `COMBO x${tumbleMultiplier}!` : "MATCH!";
-      showWinBanner = true; displayedSessionWin = actualSessionWin;
-      await wait(1800);
-      playSFX('poof.wav', 1.0);
-      poofIndices = new Set(wins);
-      grid = grid.map((s, i) => wins.has(i) ? null : s);
-      winningIndices = new Set();
-      await wait(500);
-      poofIndices = new Set();
-      tumbleMultiplier++; 
-      tumbleDown();
-      await wait(800); 
-      await processRound();
-    } else { 
-      isSpinning = false; 
-      if (actualSessionWin > 0) { bannerText = "TOTAL WIN"; showWinBanner = true; }
-      if (actualSessionWin >= bet * 50) showMegaWin = true;
-    }
-  }
-
-  function wait(ms) { return new Promise(r => setTimeout(r, isTurbo ? ms / 3 : ms)); }
   function getRandomSymbol() {
     const pool = [];
     symbols.forEach(s => { for (let i = 0; i < s.weight; i++) pool.push(s); });
     return { ...pool[Math.floor(Math.random() * pool.length)], key: Math.random() };
   }
+
+  async function handleSpinClick() {
+    if (isSpinning || isAutoPlaying) {
+      fastForward = true;
+      isAutoPlaying = false;
+      autoSpinsRemaining = 0;
+      return;
+    }
+    spin();
+  }
+
+  async function spin() {
+    if (isSpinning) return;
+    fastForward = false;
+    isSpinning = true; 
+    showWinBanner = false; 
+    showWinOverlay = false;
+    displayedSessionWin = 0; 
+    actualSessionWin = 0; 
+    
+    if (!isFreeSpins) { balance -= bet; tumbleMultiplier = 1; } 
+    else { tumbleMultiplier = persistentMultiplier; }
+    
+    playSFX('spin.wav', 0.3); 
+    grid = Array.from({ length: 25 }, () => null);
+
+    let currentWilds = 0;
+    for (let col = 0; col < 5; col++) {
+      for (let row = 0; row < 5; row++) {
+        grid[row * 5 + col] = getRandomSymbol();
+        if (grid[row * 5 + col].isWild) currentWilds++;
+      }
+      playSFX('land.wav', 0.4);
+      if (currentWilds >= 2 && col < 4 && !isTurbo) {
+        await wait(1000); 
+      } else {
+        await wait(200);
+      }
+    }
+    await wait(200);
+    await processRound();
+  }
+
+  async function processRound() {
+    const { totalWin, wins, scatterCount } = findWins();
+    
+    if (!isFreeSpins && scatterCount >= 3) {
+        showBonusBanner = true;
+        freeSpinsRemaining = 10;
+        persistentMultiplier = 1;
+        bonusTotalWin = 0; 
+        await wait(2000);
+        showBonusBanner = false;
+        isFreeSpins = true;
+    }
+
+    if (wins.size > 0) {
+      currentMatchWin = totalWin * bet * tumbleMultiplier;
+      winningIndices = wins; 
+      actualSessionWin += currentMatchWin; 
+      balance += currentMatchWin;
+      if (isFreeSpins) bonusTotalWin += currentMatchWin;
+
+      playSFX('win.wav', 0.9, 1.0 + (tumbleMultiplier * 0.12)); 
+      bannerText = `MATCH x${tumbleMultiplier}`;
+      showWinBanner = true; 
+      displayedSessionWin = actualSessionWin;
+      
+      await wait(1500); 
+      
+      playSFX('woosh.wav', 0.9);
+      wooshIndices = new Set(wins);
+      grid = grid.map((s, i) => wins.has(i) ? null : s);
+      winningIndices = new Set();
+      await wait(400);
+      wooshIndices = new Set();
+      tumbleMultiplier++; 
+      if (isFreeSpins) persistentMultiplier = tumbleMultiplier;
+
+      await tumbleDown();
+      await wait(600); 
+      await processRound();
+    } else { 
+      isSpinning = false; 
+      
+      if (actualSessionWin >= bet * 100) {
+        winTier = 'insane'; showWinOverlay = true; playSFX('win.wav', 1.0, 0.6);
+      } else if (actualSessionWin >= bet * 50) {
+        winTier = 'mega'; showWinOverlay = true; playSFX('win.wav', 1.0, 0.7);
+      } else if (actualSessionWin >= bet * 20) {
+        winTier = 'big'; showWinOverlay = true; playSFX('win.wav', 1.0, 0.8);
+      } else if (actualSessionWin > 0) {
+        bannerText = tumbleMultiplier > 1 ? "TOTAL WIN" : "WIN";
+        showWinBanner = true;
+        await wait(2000); 
+      }
+
+      if (isFreeSpins) {
+          freeSpinsRemaining--;
+          if (freeSpinsRemaining <= 0) {
+              isFreeSpins = false;
+              bannerText = "BONUS TOTAL";
+              actualSessionWin = bonusTotalWin;
+              showWinBanner = true;
+              await wait(3000); 
+          } else {
+              setTimeout(spin, 1500);
+          }
+      } else {
+          handleAuto();
+      }
+    }
+  }
+
+  function handleAuto() {
+    if (isAutoPlaying && autoSpinsRemaining > 0 && !fastForward) {
+      autoSpinsRemaining--;
+      setTimeout(spin, isTurbo ? 600 : 1200); 
+    } else { isAutoPlaying = false; isSpinning = false; }
+  }
+
   function findWins() {
-    let visited = new Set(); let wins = new Set(); let totalPayout = 0;
+    let wins = new Set(); let totalPayout = 0; let processedIndices = new Set();
+    let scCount = 0;
+    grid.forEach(s => { if (s?.isWild) scCount++; });
     for (let i = 0; i < 25; i++) {
-      if (!grid[i] || visited.has(i) || grid[i].isWild) continue;
-      let cluster = []; let queue = [i]; let type = grid[i].id;
+      if (!grid[i] || processedIndices.has(i) || grid[i].isWild) continue;
+      let typeId = grid[i].id; let cluster = [i]; let queue = [i]; let clusterVisited = new Set([i]);
       while (queue.length > 0) {
         let curr = queue.shift();
-        if (visited.has(curr)) continue;
-        visited.add(curr); cluster.push(curr);
-        let neighbors = [curr-5, curr+5];
-        if (curr % 5 !== 0) neighbors.push(curr-1);
-        if (curr % 5 !== 4) neighbors.push(curr+1);
-        neighbors.forEach(n => { 
-          if (n >= 0 && n < 25 && !visited.has(n) && grid[n] && (grid[n].id === type || grid[n].isWild)) queue.push(n); 
+        [curr-5, curr+5, curr-1, curr+1].forEach(n => {
+          let isSide = (n === curr-1 && curr % 5 !== 0) || (n === curr+1 && curr % 5 !== 4);
+          let isUpDown = (n === curr-5 && n >= 0) || (n === curr+5 && n < 25);
+          if ((isSide || isUpDown) && !clusterVisited.has(n) && grid[n]) {
+            if (grid[n].id === typeId || grid[n].isWild) { clusterVisited.add(n); cluster.push(n); queue.push(n); }
+          }
         });
       }
-      if (cluster.length >= 4) {
-        cluster.forEach(idx => wins.add(idx));
-        totalPayout += symbols.find(s => s.id === type).val * cluster.length;
+      if (cluster.length >= 5) {
+        cluster.forEach(idx => { wins.add(idx); if (!grid[idx].isWild) processedIndices.add(idx); });
+        totalPayout += symbols.find(s => s.id === typeId).val * (cluster.length - 4);
       }
     }
-    return { totalWin: totalPayout, wins };
+    return { totalWin: totalPayout, wins, scatterCount: scCount };
   }
-  function tumbleDown() {
+
+  async function tumbleDown() {
     let newGrid = [...grid];
     for (let col = 0; col < 5; col++) {
-      let columnContent = [];
+      let content = [];
       for (let row = 4; row >= 0; row--) {
         let idx = row * 5 + col;
-        if (newGrid[idx]) columnContent.unshift(newGrid[idx]);
+        if (newGrid[idx]) content.unshift(newGrid[idx]);
       }
-      while (columnContent.length < 5) columnContent.unshift(getRandomSymbol());
-      for (let row = 0; row < 5; row++) newGrid[row * 5 + col] = columnContent[row];
+      while (content.length < 5) content.unshift({ ...getRandomSymbol(), isNew: true });
+      for (let row = 0; row < 5; row++) {
+        newGrid[row * 5 + col] = content[row];
+        if (!fastForward) await wait(60); 
+      }
     }
-    grid = newGrid;
+    grid = newGrid; 
+    playSFX('land.wav', 0.5);
   }
-  function toggleAuto() {
-    if (isAutoPlaying) { isAutoPlaying = false; autoSpinsRemaining = 0; }
-    else { showAutoModal = true; }
-  }
+
+  const handleVisibility = () => {
+    if (!bgMusic) return;
+    if (document.hidden) { bgMusic.pause(); } 
+    else if (musicEnabled) { bgMusic.play().catch(() => {}); }
+  };
 
   onMount(() => { 
     grid = Array.from({ length: 25 }, () => getRandomSymbol());
     preloadSFX();
-    bgMusic = new Audio('/bg_loop.mp3');
-    bgMusic.loop = true;
-    bgMusic.volume = musicVolume;
-    document.addEventListener('visibilitychange', handleVisibilityChange);
+    bgMusic = new Audio('/bg_loop.mp3'); bgMusic.loop = true; bgMusic.volume = musicVolume;
+    if (typeof document !== 'undefined') document.addEventListener('visibilitychange', handleVisibility);
+    const unlock = () => { if(musicEnabled && bgMusic) bgMusic.play().catch(() => {}); document.removeEventListener('click', unlock); };
+    document.addEventListener('click', unlock);
   });
 
-  onDestroy(() => {
-    if (typeof document !== 'undefined') {
-      document.removeEventListener('visibilitychange', handleVisibilityChange);
-    }
-  });
+  onDestroy(() => { if (typeof document !== 'undefined') document.removeEventListener('visibilitychange', handleVisibility); });
 </script>
 
-<div class="bg-fixed"></div>
-<div class="game-container">
-  <div style="font-weight:900; color:#3d405b; text-align:center; letter-spacing:3px; font-size: 1.2rem; text-transform: uppercase;">LOFI LIBRARY</div>
+<div class="bg-fixed" class:bonus-active={isFreeSpins}></div>
+
+<div class="game-container" class:bonus-mode={isFreeSpins}>
+  <div class="header">{isFreeSpins ? 'STUDY SESSION' : 'LOFI LIBRARY'}</div>
+  
+  {#if isFreeSpins}
+    <div class="spin-counter" in:fade>FREE SPIN {11 - freeSpinsRemaining}/10</div>
+  {/if}
+
+  {#if showBonusBanner}
+    <div class="bonus-banner">ENTERING STUDY SESSION...</div>
+  {/if}
+
   {#if showWinBanner}
-    <div class="on-screen-win {tumbleMultiplier <= 2 ? 'level-1' : ''} {tumbleMultiplier > 2 && tumbleMultiplier <= 4 ? 'level-2' : ''} {tumbleMultiplier > 4 ? 'level-3' : ''}" in:scale out:fade>
-      <div style="font-size: 0.7rem; opacity: 0.9; text-transform: uppercase;">{bannerText}</div>
-      ${actualSessionWin.toFixed(2)}
+    <div class="on-screen-win {tumbleMultiplier > 1 ? 'level-2' : 'level-1'}" in:scale out:fade>
+      <div class="banner-top">{bannerText}</div>
+      <div class="banner-amt">${actualSessionWin.toFixed(2)}</div>
     </div>
   {/if}
+
+  {#if showWinOverlay}
+    <div class="win-overlay {winTier}" in:scale on:click={() => showWinOverlay = false}>
+      <div class="win-title">
+        {#if winTier === 'insane'}INSANE WIN!{:else if winTier === 'mega'}MEGA WIN!{:else}BIG WIN!{/if}
+      </div>
+      <div class="win-amt">${actualSessionWin.toFixed(2)}</div>
+    </div>
+  {/if}
+
   <div class="grid">
     {#each grid as s, i (s ? s.key : i)}
       <div class="cell" class:winning={winningIndices.has(i)}>
         {#if s}
-          <div style="width:100%; height:100%; display:flex; align-items:center; justify-content:center; animation: bounce-in 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275) forwards;">
-            <img src="/{s.image}" alt="" style="width: 88%; height: 88%; object-fit: contain;" />
+          <div class="symbol-wrapper">
+            <img src="/{s.image}" alt={s.id} />
           </div>
         {/if}
-        {#if poofIndices.has(i)} <div class="poof"></div> {/if}
+        {#if wooshIndices.has(i)}<div class="whoosh"></div>{/if}
       </div>
     {/each}
   </div>
+
   <div class="panel">
-    <div style="display: flex; justify-content: space-between; font-size: 0.9rem; margin-bottom: 12px; font-weight: bold;">
-      <span>CREDITS: ${balance.toFixed(2)}</span>
-      <span style="color: #f2cc8f">WIN: ${displayedSessionWin.toFixed(2)}</span>
+    <div class="stats">
+      <span>{isFreeSpins ? `BONUS WIN: $${bonusTotalWin.toFixed(2)}` : `CREDITS: $${balance.toFixed(2)}`}</span>
+      <span style="color: #f2cc8f">BET: ${bet.toFixed(2)}</span>
     </div>
     <div class="controls">
-      <button class="side-btn" on:click={() => showInfoModal = true}>i</button>
-      <button class="side-btn" class:active={isAutoPlaying} on:click={toggleAuto}>{isAutoPlaying ? autoSpinsRemaining : 'AUTO'}</button>
-      <button class="spin-btn" on:click={() => isAutoPlaying ? toggleAuto() : spin()} disabled={isSpinning && !isAutoPlaying}> {isAutoPlaying ? 'STOP' : (isSpinning ? '...' : 'SPIN')} </button>
-      <button class="side-btn" class:active={isTurbo} on:click={() => isTurbo = !isTurbo}>⚡</button>
-      <button class="side-btn" on:click={() => showBetModal = true} disabled={isAutoPlaying}>${bet.toFixed(2)}</button>
+      <button class="side-btn" on:click={() => (showInfoModal = true)}>i</button>
+      <button class="side-btn" on:click={() => (showAutoModal = true)}>{isAutoPlaying ? autoSpinsRemaining : 'AUTO'}</button>
+      <button class="spin-btn" on:click={handleSpinClick}>{(isSpinning || isAutoPlaying) ? 'STOP' : 'SPIN'}</button>
+      <button class="side-btn" class:active={isTurbo} on:click={() => (isTurbo = !isTurbo)}>⚡</button>
+      <button class="side-btn" disabled={isAutoPlaying || isFreeSpins} on:click={() => (showBetModal = true)}>BET</button>
     </div>
   </div>
 </div>
 
-{#if showInfoModal}
-  <div class="modal-backdrop" on:click|self={() => showInfoModal = false} transition:fade>
-    <div class="modal-box" style="text-align: left;">
-      <div class="close-x" on:click={() => showInfoModal = false}>✕</div>
-      <h3 style="text-align:center; color:#f2cc8f; margin:10px 0;">LIBRARY SETTINGS</h3>
-      
-      <div style="background: rgba(0,0,0,0.2); padding: 12px; border-radius: 10px; margin-bottom: 15px;">
-        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom: 10px;">
-          <span>Music Loops</span>
-          <button on:click={toggleMusic} style="background: {musicEnabled ? '#81b29a' : '#e07a5f'}; border:none; color:white; padding:5px 10px; border-radius:5px; font-size:0.7rem; font-weight:900;">{musicEnabled ? 'ON' : 'OFF'}</button>
-        </div>
-        <div style="display:flex; justify-content:space-between; align-items:center;">
-          <span>Sound Effects</span>
-          <button on:click={() => sfxEnabled = !sfxEnabled} style="background: {sfxEnabled ? '#81b29a' : '#e07a5f'}; border:none; color:white; padding:5px 10px; border-radius:5px; font-size:0.7rem; font-weight:900;">{sfxEnabled ? 'ON' : 'OFF'}</button>
-        </div>
-      </div>
-
-      <div style="font-size: 0.8rem; line-height: 1.3; margin-bottom: 15px; opacity: 0.8;">
-        <span style="color:#f2cc8f; font-weight:900;">CLUSTERS:</span> 4+ adjacent icons. <br>
-        <span style="color:#f2cc8f; font-weight:900;">TUMBLES:</span> Wins clear; gaps fill.
-      </div>
-      <h3 style="text-align:center; color:#f2cc8f; margin:0 0 10px 0; border-top: 1px solid rgba(255,255,255,0.1); padding-top:10px;">PAYTABLE</h3>
-      {#each symbols.filter(s => !s.isWild) as s}
-        <div style="display:flex; justify-content:space-between; align-items:center; padding:5px 0; border-bottom:1px solid rgba(255,255,255,0.05);">
-           <div style="display:flex; align-items:center; gap:8px;">
-              <img src="/{s.image}" alt="" style="width:20px; height:20px;" />
-              <span>{s.id}</span>
-           </div>
-           <span>{s.val.toFixed(1)}x</span>
-        </div>
-      {/each}
-    </div>
-  </div>
-{/if}
-
 {#if showAutoModal}
-  <div class="modal-backdrop" on:click|self={() => showAutoModal = false} transition:fade>
+  <div class="modal-backdrop" on:click|self={() => (showAutoModal = false)}>
     <div class="modal-box">
-      <div class="close-x" on:click={() => showAutoModal = false}>✕</div>
-      <h3 style="margin-top:10px;">AUTO SPINS</h3>
-      <div style="display:grid; grid-template-columns: 1fr 1fr; gap:12px;">
+      <h3>AUTO SPINS</h3>
+      <div class="opt-grid">
         {#each [10, 25, 50, 100] as opt}
-          <button style="background:#81b29a; border:none; padding:15px; border-radius:10px; color:white; font-weight:900;" on:click={() => { autoSpinsRemaining = opt; isAutoPlaying = true; showAutoModal = false; spin(); }}>{opt}</button>
+          <button on:click={() => { autoSpinsRemaining = opt; isAutoPlaying = true; showAutoModal = false; spin(); }}>{opt}</button>
         {/each}
       </div>
     </div>
@@ -283,43 +333,78 @@
 {/if}
 
 {#if showBetModal}
-  <div class="modal-backdrop" on:click|self={() => showBetModal = false} transition:fade>
+  <div class="modal-backdrop" on:click|self={() => (showBetModal = false)}>
     <div class="modal-box">
-      <div class="close-x" on:click={() => showBetModal = false}>✕</div>
-      <h3 style="margin-top:10px;">BET AMOUNT</h3>
-      <div style="display:grid; grid-template-columns: repeat(2, 1fr); gap:10px;">
+      <h3>BET AMOUNT</h3>
+      <div class="opt-grid">
         {#each betOptions as opt}
-          <button style="background:#81b29a; border:none; padding:12px; border-radius:10px; color:white; font-weight:900;" on:click={() => { bet = opt; showBetModal = false; }}>${opt.toFixed(2)}</button>
+          <button on:click={() => { bet = opt; showBetModal = false; }}>${opt.toFixed(2)}</button>
         {/each}
       </div>
     </div>
   </div>
 {/if}
 
+{#if showInfoModal}
+  <div class="modal-backdrop" on:click|self={() => (showInfoModal = false)}>
+    <div class="modal-box info-style">
+      <h3 style="color: #e07a5f; margin: 0;">PAYTABLE ($1 BET)</h3>
+      <div class="pay-grid">
+        {#each symbols.filter(s => !s.isWild) as s}
+          <div class="pay-item"><span>{s.id}</span><b>${s.val.toFixed(2)}</b></div>
+        {/each}
+      </div>
+      <div style="font-size: 0.7rem; text-align: left; background: #eee; padding: 5px; border-radius: 5px; margin-top: 5px;">
+        <p><b>RTP:</b> 96.45%</p>
+        <p><b>RULES:</b> 5+ symbols connected. Wilds act as Scatters.</p>
+        <p><b>BONUS:</b> 3+ Wilds = 10 Free Spins with growing Multipliers.</p>
+      </div>
+      <button class="close-btn" on:click={() => (showInfoModal = false)}>CLOSE</button>
+    </div>
+  </div>
+{/if}
+
 <style>
-  :global(body) { margin: 0; padding: 0; height: 100vh; width: 100vw; background-color: #81b29a; display: flex; align-items: flex-end; justify-content: center; overflow: hidden; }
-  .bg-fixed { position: fixed; inset: 0; background: url('/background.png') no-repeat center bottom / auto 100%; z-index: -1; animation: bg-breath 20s ease-in-out infinite; }
-  @keyframes bg-breath { 0%, 100% { transform: scale(1); } 50% { transform: scale(1.02); } }
-  .game-container { background: rgba(255, 253, 250, 0.94); padding: 12px; border-radius: 20px; width: 94%; max-width: 420px; position: relative; box-shadow: 0 12px 45px rgba(0,0,0,0.55); border: 5px solid #3d405b; margin-bottom: 1.5vh; z-index: 5; }
-  .on-screen-win { position: absolute; top: 40%; left: 50%; transform: translate(-50%, -50%); color: white; padding: 15px 25px; border-radius: 50px; font-size: 1.6rem; font-weight: 900; z-index: 500; border: 4px solid white; text-align: center; pointer-events: none; animation: banner-slam 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275); transition: background 0.5s, box-shadow 0.5s; }
-  .on-screen-win.level-1 { background: #e07a5f; box-shadow: 0 8px 0 #be634a; }
-  .on-screen-win.level-2 { background: #f2cc8f; box-shadow: 0 8px 0 #d4a35d; color: #3d405b; border-color: #3d405b; }
-  .on-screen-win.level-3 { background: #9b5de5; box-shadow: 0 8px 0 #6a3ab1; animation: banner-slam 0.4s, pulse-purple 1.5s infinite alternate; }
-  @keyframes pulse-purple { from { filter: brightness(1); } to { filter: brightness(1.3); } }
-  @keyframes banner-slam { 0% { transform: translate(-50%, -50%) scale(0.5); opacity: 0; } 100% { transform: translate(-50%, -50%) scale(1); opacity: 1; } }
-  .grid { display: grid; grid-template-columns: repeat(5, 1fr); gap: 8px; margin: 10px 0; background: #fdfaf5; padding: 8px; border-radius: 16px; border: 2px solid #e0d7c1; min-height: 320px; }
-  .cell { aspect-ratio: 1; background: #fff; border-radius: 10px; display: flex; align-items: center; justify-content: center; border: 2px solid #f2ecde; position: relative; overflow: visible; }
-  .cell.winning { background: #fdf4e3 !important; border-color: #f2cc8f !important; box-shadow: inset 0 0 15px #f2cc8f; z-index: 2; }
-  .cell.winning img { animation: jitter 0.15s infinite linear; filter: drop-shadow(0 0 5px #f2cc8f); }
-  .poof { position: absolute; width: 100%; height: 100%; pointer-events: none; z-index: 10; background: radial-gradient(circle, #f2cc8f 10%, transparent 60%); border-radius: 50%; animation: particle-poof 0.5s ease-out forwards; }
-  @keyframes particle-poof { 0% { transform: scale(0.2); opacity: 0.8; } 50% { transform: scale(1.5); opacity: 0.4; } 100% { transform: scale(2); opacity: 0; } }
-  @keyframes jitter { 0% { transform: translate(0,0); } 25% { transform: translate(1px, 1px); } 50% { transform: translate(-1px, -1px); } 75% { transform: translate(1px, -1px); } 100% { transform: translate(0,0); } }
-  .panel { background: #3d405b; color: #f4f1de; border-radius: 14px; padding: 12px; }
+  :global(body) { margin: 0; background: #81b29a; display: flex; align-items: center; justify-content: center; height: 100vh; overflow: hidden; font-family: sans-serif; touch-action: manipulation; }
+  .bg-fixed { position: fixed; inset: 0; background: url('/background.png') center/cover; z-index: -1; transition: filter 1s; }
+  .bonus-active { filter: brightness(0.6) saturate(1.1) contrast(1.1) hue-rotate(-20deg); }
+  .game-container { background: rgba(255,255,255,0.95); padding: 15px; border-radius: 20px; width: 92vw; max-width: 420px; border: 4px solid #3d405b; position: relative; }
+  .bonus-mode { background: rgba(30, 32, 50, 0.9); border-color: #f2cc8f; color: #f2cc8f; }
+  .header { text-align: center; font-weight: 900; color: #3d405b; margin-bottom: 10px; letter-spacing: 2px; }
+  .spin-counter { text-align: center; font-size: 0.8rem; font-weight: 900; background: #f2cc8f; color: #3d405b; padding: 2px 10px; border-radius: 10px; width: fit-content; margin: 0 auto 5px; }
+  .grid { display: grid; grid-template-columns: repeat(5, 1fr); gap: 6px; background: #fdfaf5; padding: 6px; border-radius: 12px; border: 2px solid #e0d7c1; }
+  .cell { aspect-ratio: 1; background: white; border-radius: 8px; display: flex; align-items: center; justify-content: center; position: relative; border: 1px solid #eee; }
+  .winning { border: 5px solid #f2cc8f !important; transform: scale(1.05); z-index: 50; box-shadow: 0 0 20px #f2cc8f; background: #fffdf5 !important; }
+  .symbol-wrapper img { width: 85%; }
+  .panel { background: #3d405b; margin-top: 10px; padding: 12px; border-radius: 12px; color: white; }
+  .stats { display: flex; justify-content: space-between; margin-bottom: 10px; font-size: 0.85rem; font-weight: bold; }
   .controls { display: flex; gap: 6px; }
-  .side-btn { background: #81b29a; border: none; border-radius: 8px; min-width: 48px; color: white; font-weight: 900; font-size: 0.8rem; cursor: pointer; }
-  .side-btn.active { background: #f2cc8f !important; color: #3d405b !important; }
-  .spin-btn { flex: 1; background: #e07a5f; color: white; border: none; border-radius: 8px; height: 52px; font-weight: 900; font-size: 1.2rem; box-shadow: 0 4px 0 #be634a; }
-  .modal-backdrop { position: fixed; inset: 0; background: rgba(0,0,0,0.85); z-index: 100000; display: flex; align-items: center; justify-content: center; }
-  .modal-box { background: #3d405b; padding: 25px; border-radius: 20px; width: 85%; max-width: 360px; color: white; border: 4px solid #81b29a; position: relative; text-align: center; max-height: 80vh; overflow-y: auto; }
-  .close-x { position: absolute; top: 10px; right: 10px; width: 32px; height: 32px; background: #e07a5f; color: white; border-radius: 50%; border: 2px solid white; font-weight: 900; cursor: pointer; display: flex; align-items: center; justify-content: center; z-index: 10; }
+  .side-btn { background: #81b29a; border: none; border-radius: 8px; color: white; padding: 10px; flex: 1; font-weight: bold; cursor: pointer; }
+  .side-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+  .spin-btn { background: #e07a5f; border: none; border-radius: 8px; color: white; flex: 2; font-weight: 900; font-size: 1.1rem; box-shadow: 0 4px 0 #be634a; cursor: pointer; }
+  .on-screen-win { position: absolute; top: 38%; left: 50%; transform: translate(-50%, -50%); padding: 15px 30px; border-radius: 40px; border: 4px solid white; font-weight: 900; z-index: 100; text-align: center; box-shadow: 0 10px 20px rgba(0,0,0,0.4); pointer-events: none; }
+  .banner-top { font-size: 1rem; margin-bottom: 2px; }
+  .banner-amt { font-size: 1.5rem; }
+  .level-1 { background: #e07a5f; color: white; }
+  .level-2 { background: #f2cc8f; color: #3d405b; }
+  .modal-backdrop { position: fixed; inset: 0; background: rgba(0,0,0,0.8); z-index: 9999; display: flex; align-items: center; justify-content: center; }
+  .modal-box { background: white; padding: 25px; border-radius: 18px; width: 85%; max-width: 320px; text-align: center; color: #3d405b; }
+  .opt-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 15px; }
+  .opt-grid button { background: #81b29a; color: white; border: none; padding: 12px; border-radius: 8px; font-weight: bold; }
+  .pay-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin: 10px 0; font-size: 0.8rem; }
+  .pay-item { display: flex; justify-content: space-between; border-bottom: 1px solid #eee; }
+  .close-btn { background: #3d405b; color: white; border: none; padding: 10px; border-radius: 8px; width: 100%; margin-top: 10px; font-weight: bold; }
+  .whoosh { position: absolute; inset: 0; background: radial-gradient(circle, #f2cc8f 20%, transparent 70%); animation: whoosh-anim 0.5s forwards; z-index: 20; }
+  @keyframes whoosh-anim { 0% { transform: scale(0.2); opacity: 1; } 100% { transform: scale(2.8); opacity: 0; } }
+  .bonus-banner { position: absolute; top: 15px; left: 10px; right: 10px; background: #f2cc8f; color: #3d405b; padding: 15px; border-radius: 12px; font-weight: 900; text-align: center; z-index: 5000; border: 3px solid #3d405b; pointer-events: none; }
+  .win-overlay { position: absolute; inset: 0; z-index: 3000; border-radius: 20px; display: flex; flex-direction: column; align-items: center; justify-content: center; color: white; cursor: pointer; text-align: center; }
+  .win-title { font-size: 3rem; font-weight: 900; text-shadow: 3px 3px 0 #3d405b; }
+  .win-amt { font-size: 2rem; font-weight: 900; padding: 10px 20px; border-radius: 10px; margin-top: 10px; }
+  .big { background: rgba(224, 122, 95, 0.98); }
+  .mega { background: rgba(61, 64, 91, 0.98); }
+  .mega .win-amt { background: #f2cc8f; color: #3d405b; }
+  .insane { background: rgba(242, 204, 143, 0.98); color: #3d405b; animation: insane-shake 0.3s infinite; }
+  .insane .win-title { text-shadow: 2px 2px 0 white; }
+  .insane .win-amt { background: #3d405b; color: white; }
+  @keyframes insane-shake { 0% { transform: translate(0,0); } 25% { transform: translate(-5px, 5px); } 75% { transform: translate(5px, -5px); } }
 </style>
