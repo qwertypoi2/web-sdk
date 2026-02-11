@@ -25,18 +25,68 @@
   let showBetModal = false;
   let showAutoModal = false;
   let autoSpinsRemaining = 0;
+  let splashStage = "game";
+  let showSplash = false;
+  let freeSpinsRemaining = 0;
+  let isFreeSpinMode = false;
 
   const symbols = [
-    { id: 'Cabin', image: 'cabin.png', val: 12.00, weight: 3 },
-    { id: 'Cat', image: 'cat.png', val: 6.00, weight: 5 },
-    { id: 'Vinyl', image: 'record.png', val: 2.80, weight: 8 },
-    { id: 'Headphones', image: 'headphones.png', val: 1.50, weight: 10 },
-    { id: 'Book', image: 'book.png', val: 0.85, weight: 12 },
-    { id: 'Succulent', image: 'succulent.png', val: 0.70, weight: 15 },
-    { id: 'Matcha', image: 'coffee.png', val: 0.45, weight: 18 },
-    { id: 'Candle', image: 'candle.png', val: 0.15, weight: 20 },
-    { id: 'Wild', image: 'wild.png', isWild: true, weight: 1 } 
-  ];
+  {
+    "id": "Cabin",
+    "image": "cabin.png",
+    "val": 89,
+    "weight": 3
+  },
+  {
+    "id": "Cat",
+    "image": "cat.png",
+    "val": 44.5,
+    "weight": 5
+  },
+  {
+    "id": "Vinyl",
+    "image": "record.png",
+    "val": 17.8,
+    "weight": 8
+  },
+  {
+    "id": "Headphones",
+    "image": "headphones.png",
+    "val": 8.9,
+    "weight": 10
+  },
+  {
+    "id": "Book",
+    "image": "book.png",
+    "val": 4.45,
+    "weight": 12
+  },
+  {
+    "id": "Succulent",
+    "image": "succulent.png",
+    "val": 2.2,
+    "weight": 15
+  },
+  {
+    "id": "Matcha",
+    "image": "coffee.png",
+    "val": 1.31,
+    "weight": 18
+  },
+  {
+    "id": "Candle",
+    "image": "candle.png",
+    "val": 0.68,
+    "weight": 20
+  },
+  {
+    "id": "Wild",
+    "image": "wild.png",
+    "val": 0,
+    "weight": 1,
+    "isWild": true
+  }
+];
   const betOptions = [0.10, 0.20, 0.50, 1.00, 2.00, 5.00, 10.00];
   let sfxCache = {};
   let bgMusic;
@@ -57,7 +107,7 @@
     if (bgMusic && !mute && bgMusic.paused) bgMusic.play().catch(() => {});
     
     isSpinning = true;
-    if (autoSpinsRemaining === 0) balance -= bet;
+    if (autoSpinsRemaining === 0 && !isFreeSpinMode) balance -= bet;
     actualSessionWin = 0;
     tumbleMultiplier = 1;
     displayMultiplier = 1;
@@ -93,14 +143,28 @@
       grid = grid.map((s, i) => wins.has(i) ? null : s);
       winningIndices = new Set();
       
-      await new Promise(r => setTimeout(r, 500));
       
+      // Check for 3+ Library Cards to trigger 10 Free Spins
+      const scatterCount = grid.filter(s => s && s.isScatter).length;
+      if (scatterCount >= 3 && !isFreeSpinMode) {
+        freeSpinsRemaining = 10;
+        isFreeSpinMode = true;
+      }
+
+      await new Promise(r => setTimeout(r, 500));
       tumbleMultiplier++;
       await tumbleDown();
       await processRound();
     } else { 
       isSpinning = false;
-      if (autoSpinsRemaining > 0) {
+      if (freeSpinsRemaining > 0) {
+        freeSpinsRemaining--;
+        if (freeSpinsRemaining === 0) {
+            isFreeSpinMode = false;
+            tumbleMultiplier = 1; 
+        }
+        setTimeout(spin, 1200);
+      } else if (autoSpinsRemaining > 0) {
         autoSpinsRemaining--;
         setTimeout(spin, 1200);
       }
@@ -179,8 +243,10 @@
     }
   }
 
-  onMount(async () => { 
+              onMount(async () => {
+    // Instant load. No splash. No timers.
     grid = await Promise.all(Array.from({length: 25}, (_, i) => getSeededSymbol(i)));
+    
     ['land.wav', 'win.wav', 'spin.wav', 'woosh.wav'].forEach(f => {
       sfxCache[f] = new Audio('/' + f);
     });
@@ -189,6 +255,7 @@
     bgMusic.volume = 0.15;
     document.addEventListener('visibilitychange', handleVisibility);
   });
+
   onDestroy(() => {
     if (typeof document !== 'undefined') {
       document.removeEventListener('visibilitychange', handleVisibility);
@@ -197,6 +264,17 @@
 </script>
 
 <div class='bg-fixed'></div>
+
+{#if showSplash}
+  
+{/if}
+
+
+
+
+
+
+
 <div class='game-container'>
   <div class='header'>LOFI LIBRARY</div>
 
@@ -288,7 +366,7 @@
   .img-wrap img { width: 100%; height: 100%; object-fit: contain; }
   .win { border: 4px solid #f2cc8f !important; transform: scale(1.05); z-index: 10; background:#fffdf5 !important; }
   .dim { opacity: 0.3; filter: grayscale(100%); transition: opacity 0.3s; }
-  .banner { position:absolute; top:40%; left:50%; transform:translate(-50%, -50%); padding:15px 20px; border-radius:24px; z-index:5000; text-align:center; color:white; background:#e07a5f; border:4px solid white; box-shadow:0 15px 45px rgba(0,0,0,0.4); min-width:260px; }
+  .banner { position:absolute; top:40%; left:50%; transform:translate(-50%, -50%); padding:15px 20px; border-radius:24px; z-index:5000; text-align:center; color:white; background:rgba(224, 122, 95, 0.9); backdrop-filter: blur(4px); border:4px solid white; box-shadow:0 15px 45px rgba(0,0,0,0.4); min-width:260px; }
   .amt { font-size:1.6rem; font-weight:900; margin-bottom: 5px; }
   .details { font-size: 1rem; font-weight: 800; margin-bottom: 8px; text-transform: uppercase; background: rgba(0,0,0,0.2); padding: 4px 10px; border-radius: 10px; }
   .mult { font-size:0.8rem; font-weight:900; background:#3d405b; display:inline-block; padding:3px 10px; border-radius:15px; color:#f2cc8f; border:1px solid #f2cc8f; }
@@ -297,7 +375,7 @@
   .controls { display:flex; gap:4px; }
   .side-btn { background:#81b29a; border:none; border-radius:8px; color:white; padding:8px 4px; flex:1; font-weight:bold; cursor:pointer; font-size: 0.85rem; }
   .mute-btn { background:#b7d4c5; border: 1px solid #3d405b; color: #3d405b; }
-  .spin-btn { background:#e07a5f; border:none; border-radius:8px; color:white; flex:2; font-weight:900; font-size:1.1rem; cursor:pointer; box-shadow: 0 4px 0 #be634a; }
+  .spin-btn { background: rgba(224, 122, 95, 0.85); backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px); border:none; border-radius:8px; color:white; flex:2; font-weight:900; font-size:1.1rem; cursor:pointer; box-shadow: 0 4px 0 #be634a; }
   .modal-backdrop { position:fixed; inset:0; background:rgba(0,0,0,0.8); z-index:9999; display:flex; align-items:center; justify-content:center; }
   .lofi-modal { background:#b7d4c5; padding:25px; border-radius:20px; width:85%; max-width:320px; text-align:center; border: 4px solid #3d405b; }
   .modal-grid { display:grid; grid-template-columns: 1fr 1fr 1fr; gap:10px; }
@@ -306,5 +384,6 @@
   .pay-grid { display:grid; grid-template-columns: 1fr 1fr; gap:8px; margin:10px 0; font-size:0.8rem; }
   .pay-item { display:flex; justify-content:space-between; border-bottom:1px solid #3d405b; padding-bottom:2px; color:#3d405b; }
   .rtp-tag { font-size: 0.65rem; color: #3d405b; margin-top:10px; font-style:italic; }
-  .close-btn { background:#3d405b; color:white; border:none; padding:12px; border-radius:10px; width:100%; margin-top:15px; cursor:pointer; font-weight:bold; }
+  .close-btn { background:#3d405b; color:white; border:none; padding:12px; border-radius:10px; width:100%; margin-top:15px; cursor:pointer; font-weight:bold;
+}
 </style>
