@@ -1,0 +1,11 @@
+{
+  "game_id": "lofi_library",
+  "name": "Lofi Library",
+  "type": "slot",
+  "provider": "Independent",
+  "math_sdk_version": "2026.1",
+  "rtp": 96.45,
+  "config_file": "game_config.py",
+  "audit_report": "stake_audit_report.txt",
+  "provably_fair_link": "PROVABLY_FAIR.md"
+}
