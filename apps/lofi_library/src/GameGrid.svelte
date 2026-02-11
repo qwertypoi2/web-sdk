@@ -12,6 +12,7 @@
   let bet = 1.00;
   let actualSessionWin = 0.00;
   let tumbleMultiplier = 1;
+  let displayMultiplier = 1;
   let isSpinning = false;
   let isTurbo = false;
   let mute = false;
@@ -26,17 +27,16 @@
   let autoSpinsRemaining = 0;
 
   const symbols = [
-    { id: 'Cabin', image: 'cabin.png', val: 75.130, weight: 3 },
-    { id: 'Cat', image: 'cat.png', val: 37.565, weight: 5 },
-    { id: 'Vinyl', image: 'record.png', val: 15.026, weight: 8 },
-    { id: 'Headphones', image: 'headphones.png', val: 7.513, weight: 10 },
-    { id: 'Book', image: 'book.png', val: 3.757, weight: 12 },
-    { id: 'Succulent', image: 'succulent.png', val: 1.878, weight: 15 },
-    { id: 'Matcha', image: 'coffee.png', val: 1.127, weight: 18 },
-    { id: 'Candle', image: 'candle.png', val: 0.751, weight: 20 },
+    { id: 'Cabin', image: 'cabin.png', val: 12.00, weight: 3 },
+    { id: 'Cat', image: 'cat.png', val: 6.00, weight: 5 },
+    { id: 'Vinyl', image: 'record.png', val: 2.80, weight: 8 },
+    { id: 'Headphones', image: 'headphones.png', val: 1.50, weight: 10 },
+    { id: 'Book', image: 'book.png', val: 0.85, weight: 12 },
+    { id: 'Succulent', image: 'succulent.png', val: 0.70, weight: 15 },
+    { id: 'Matcha', image: 'coffee.png', val: 0.45, weight: 18 },
+    { id: 'Candle', image: 'candle.png', val: 0.15, weight: 20 },
     { id: 'Wild', image: 'wild.png', isWild: true, weight: 1 } 
   ];
-
   const betOptions = [0.10, 0.20, 0.50, 1.00, 2.00, 5.00, 10.00];
   let sfxCache = {};
   let bgMusic;
@@ -49,6 +49,7 @@
   }
 
   async function spin() {
+    showWinBanner = false; 
     if (isSpinning) {
       if (autoSpinsRemaining > 0) autoSpinsRemaining = 0; 
       return;
@@ -56,13 +57,12 @@
     if (bgMusic && !mute && bgMusic.paused) bgMusic.play().catch(() => {});
     
     isSpinning = true;
-    showWinBanner = false;
     if (autoSpinsRemaining === 0) balance -= bet;
     actualSessionWin = 0;
     tumbleMultiplier = 1;
+    displayMultiplier = 1;
     nonce++; 
     playSFX('spin.wav', 0.2);
-
     grid = Array.from({ length: 25 }, () => null);
     for (let col = 0; col < 5; col++) {
       for (let row = 0; row < 5; row++) {
@@ -82,14 +82,19 @@
       actualSessionWin += winAmt;
       balance += winAmt;
       bannerText = clusterDetails.map(c => c.count + 'x ' + c.id).join(' + ');
+      displayMultiplier = tumbleMultiplier;
       isDimmed = true;
       showWinBanner = true;
       playSFX('win.wav', 0.6);
       await new Promise(r => setTimeout(r, 2000));
       isDimmed = false;
-      showWinBanner = false;
+      
+      playSFX('woosh.wav', 0.4);
       grid = grid.map((s, i) => wins.has(i) ? null : s);
       winningIndices = new Set();
+      
+      await new Promise(r => setTimeout(r, 500));
+      
       tumbleMultiplier++;
       await tumbleDown();
       await processRound();
@@ -103,7 +108,8 @@
   }
 
   function findWins() {
-    let wins = new Set(); let totalPayout = 0;
+    let wins = new Set();
+    let totalPayout = 0;
     let processedIndices = new Set();
     let clusterDetails = [];
     for (let i = 0; i < 25; i++) {
@@ -152,9 +158,7 @@
 
   async function generateHashedResult(sSeed, cSeed, n) {
     const msg = sSeed + '-' + cSeed + '-' + n;
-    const encoder = new TextEncoder();
-    const data = encoder.encode(msg);
-    const hashBuffer = await crypto.subtle.digest('SHA-256', data);
+    const hashBuffer = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(msg));
     return Array.from(new Uint8Array(hashBuffer)).reduce((acc, b) => acc + b.toString(16).padStart(2, '0'), '');
   }
 
@@ -177,7 +181,7 @@
 
   onMount(async () => { 
     grid = await Promise.all(Array.from({length: 25}, (_, i) => getSeededSymbol(i)));
-    ['land.wav', 'win.wav', 'spin.wav'].forEach(f => {
+    ['land.wav', 'win.wav', 'spin.wav', 'woosh.wav'].forEach(f => {
       sfxCache[f] = new Audio('/' + f);
     });
     bgMusic = new Audio('/bg_loop.mp3');
@@ -185,7 +189,6 @@
     bgMusic.volume = 0.15;
     document.addEventListener('visibilitychange', handleVisibility);
   });
-
   onDestroy(() => {
     if (typeof document !== 'undefined') {
       document.removeEventListener('visibilitychange', handleVisibility);
@@ -201,22 +204,26 @@
     <div class='banner' in:scale out:fade>
       <div class='amt'>+{actualSessionWin.toFixed(2)} CREDITS</div>
       <div class='details'>{bannerText}</div>
-      <div class='mult'>{tumbleMultiplier}x MULTIPLIER</div>
+      {#if displayMultiplier > 1}
+        <div class='mult'>{displayMultiplier}x MULTIPLIER</div>
+      {/if}
     </div>
   {/if}
 
-  <div class='grid'>
-    {#each grid as s, i (s ? s.key : i)}
-      <div class='cell' class:win={winningIndices.has(i)} class:dim={isDimmed && !winningIndices.has(i)}>
-        {#if s}<div class='img-wrap'><img src={'/' + s.image} alt='' /></div>{/if}
-      </div>
-    {/each}
+  <div class='grid-area'>
+    <div class='grid'>
+      {#each grid as s, i (s ? s.key : i)}
+        <div class='cell' class:win={winningIndices.has(i)} class:dim={isDimmed && !winningIndices.has(i)}>
+          {#if s}<div class='img-wrap'><img src={'/' + s.image} alt='' /></div>{/if}
+        </div>
+      {/each}
+    </div>
   </div>
 
   <div class='panel'>
     <div class='stats'>
       <span>BAL: {balance.toFixed(2)} CREDITS</span>
-      <span style='color:#f2cc8f'>BET: {bet.toFixed(2)}</span>
+      <span style='color:#3d405b'>BET: {bet.toFixed(2)}</span>
     </div>
     <div class='controls'>
       <button class='side-btn info-btn' on:click={() => showInfoModal = true}>i</button>
@@ -254,7 +261,7 @@
       <h3 style="color:#e07a5f;">HOW TO PLAY 🧩</h3>
       <div class='info-text'>
         <p>Connect <b>5 or more</b> matching pictures that are <b>touching</b> each other!</p>
-        <p>Winning groups <b>POP</b>! New pictures fall in, and every chain reaction makes your <b>Multiplier</b> grow (1x, 2x, 3x...). This is where the biggest wins are hidden!</p>
+        <p>Winning groups <b>POP</b>! Every chain reaction makes your <b>Multiplier</b> grow. This is where the biggest wins are hidden!</p>
       </div>
       <h3 style="color:#e07a5f; font-size:1rem; margin-top:10px;">PAYOUTS (5 Matches)</h3>
       <div class='pay-grid'>
@@ -262,7 +269,7 @@
           <div class='pay-item'><span>{s.id}</span><b>{s.val.toFixed(2)}x</b></div>
         {/each}
       </div>
-      <div class='rtp-tag'>Theoretical RTP: 96.45%</div>
+      <div class='rtp-tag'>Theoretical RTP: 96.42%</div>
     {/if}
     <button class='close-btn' on:click={() => {showBetModal = false; showAutoModal = false; showInfoModal = false;}}>CLOSE</button>
   </div>
@@ -274,9 +281,10 @@
   .bg-fixed { position:fixed; inset:0; background:url('/background.png') center/cover; z-index:-1; }
   .game-container { background:rgba(255,255,255,0.96); padding:15px; border-radius:20px; width:92vw; max-width:400px; border:4px solid #3d405b; position:relative; }
   .header { text-align:center; font-weight:900; color:#3d405b; margin-bottom:10px; font-size:1.2rem; }
-  .grid { display:grid; grid-template-columns: repeat(5, 1fr); gap:6px; background:#fdfaf5; padding:8px; border-radius:12px; }
-  .cell { width: 100%; aspect-ratio: 1/1; background:white; border-radius:8px; display:flex; align-items:center; justify-content:center; border:1px solid #f0f0f0; overflow:hidden; position: relative; }
-  .img-wrap { position: absolute; width: 100%; height: 100%; display: flex; align-items: center; justify-content: center; padding: 1px; box-sizing: border-box; }
+  .grid-area { background:#b7d4c5; padding:8px; border-radius:12px; }
+  .grid { display:grid; grid-template-columns: repeat(5, 1fr); gap:6px; }
+  .cell { width: 100%; aspect-ratio: 1/1; background:rgba(255, 255, 255, 0.5); border-radius:8px; display:flex; align-items:center; justify-content:center; border:1px solid #f0f0f0; overflow:hidden; position: relative; }
+  .img-wrap { position: absolute; width: 100%; height: 100%; display: flex; align-items: center; justify-content: center; padding: 1px; }
   .img-wrap img { width: 100%; height: 100%; object-fit: contain; }
   .win { border: 4px solid #f2cc8f !important; transform: scale(1.05); z-index: 10; background:#fffdf5 !important; }
   .dim { opacity: 0.3; filter: grayscale(100%); transition: opacity 0.3s; }
@@ -284,21 +292,19 @@
   .amt { font-size:1.6rem; font-weight:900; margin-bottom: 5px; }
   .details { font-size: 1rem; font-weight: 800; margin-bottom: 8px; text-transform: uppercase; background: rgba(0,0,0,0.2); padding: 4px 10px; border-radius: 10px; }
   .mult { font-size:0.8rem; font-weight:900; background:#3d405b; display:inline-block; padding:3px 10px; border-radius:15px; color:#f2cc8f; border:1px solid #f2cc8f; }
-  .panel { background:#3d405b; margin-top:15px; padding:12px; border-radius:12px; color:white; }
+  .panel { background:#b7d4c5; margin-top:15px; padding:12px; border-radius:12px; color:#3d405b; border:2px solid #3d405b; }
   .stats { display:flex; justify-content:space-between; font-size:0.8rem; font-weight:bold; margin-bottom:10px; }
   .controls { display:flex; gap:4px; }
   .side-btn { background:#81b29a; border:none; border-radius:8px; color:white; padding:8px 4px; flex:1; font-weight:bold; cursor:pointer; font-size: 0.85rem; }
-  .mute-btn { background:#3d405b; border: 1px solid #f2cc8f; }
+  .mute-btn { background:#b7d4c5; border: 1px solid #3d405b; color: #3d405b; }
   .spin-btn { background:#e07a5f; border:none; border-radius:8px; color:white; flex:2; font-weight:900; font-size:1.1rem; cursor:pointer; box-shadow: 0 4px 0 #be634a; }
   .modal-backdrop { position:fixed; inset:0; background:rgba(0,0,0,0.8); z-index:9999; display:flex; align-items:center; justify-content:center; }
-  .lofi-modal { background:#b7d4c5; padding:25px; border-radius:20px; width:85%; max-width:320px; text-align:center; border: 4px solid #3d405b; box-shadow: 0 10px 0 rgba(0,0,0,0.1); }
-  .lofi-modal h3 { margin-top:0; color:#3d405b; font-weight:900; margin-bottom:15px; }
+  .lofi-modal { background:#b7d4c5; padding:25px; border-radius:20px; width:85%; max-width:320px; text-align:center; border: 4px solid #3d405b; }
   .modal-grid { display:grid; grid-template-columns: 1fr 1fr 1fr; gap:10px; }
   .modal-btn { background:#81b29a; border:none; color:white; padding:12px 5px; border-radius:10px; font-weight:bold; cursor:pointer; font-size:0.9rem; border-bottom:3px solid #628d7a; }
-  .modal-btn:active { border-bottom:0; transform:translateY(3px); }
   .info-text { font-size:0.85rem; text-align:left; line-height:1.4; color:#3d405b; }
   .pay-grid { display:grid; grid-template-columns: 1fr 1fr; gap:8px; margin:10px 0; font-size:0.8rem; }
-  .pay-item { display:flex; justify-content:space-between; border-bottom:1px solid #e0d7c1; padding-bottom:2px; color:#3d405b; }
-  .rtp-tag { font-size: 0.65rem; color: #5a7a6b; margin-top:10px; font-style:italic; }
+  .pay-item { display:flex; justify-content:space-between; border-bottom:1px solid #3d405b; padding-bottom:2px; color:#3d405b; }
+  .rtp-tag { font-size: 0.65rem; color: #3d405b; margin-top:10px; font-style:italic; }
   .close-btn { background:#3d405b; color:white; border:none; padding:12px; border-radius:10px; width:100%; margin-top:15px; cursor:pointer; font-weight:bold; }
 </style>
